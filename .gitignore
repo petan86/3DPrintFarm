@@ -27,5 +27,9 @@ Thumbs.db
 secrets.*
 credentials.*
 
+# Raspberry Pi server runtime data
+server/data/
+.venv-server/
+
 # Downloaded archive; sources are present in the repository
 Marlin_2125.zip
