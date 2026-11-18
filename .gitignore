@@ -1,0 +1,31 @@
+# Local build environments
+.venv/
+.platformio/
+
+# Build outputs
+**/.pio/
+**/.pioenvs/
+**/.cache/
+**/firmware.bin
+**/firmware.elf
+**/bootloader.bin
+**/partitions.bin
+
+# Preserved metadata of vendored upstream repositories
+**/.git-upstream/
+
+# Local editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local secrets and runtime configuration
+.env
+.env.*
+!.env.example
+secrets.*
+credentials.*
+
+# Downloaded archive; sources are present in the repository
+Marlin_2125.zip
