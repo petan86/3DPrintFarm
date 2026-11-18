@@ -590,6 +590,23 @@
 #define AUTHENTICATION_FEATURE
 
 /************************************
+ * 3DPrintFarm agent
+ ************************************/
+#define FARM_AGENT_FEATURE
+#define FARM_AGENT_SERVER_URL "http://192.168.1.10:8000"
+#define FARM_AGENT_POLL_INTERVAL_MS 10000
+#define FARM_AGENT_AUTO_CLAIM false
+
+// Copy farm_agent_secrets.h.example to farm_agent_secrets.h for each printer.
+// The real file is ignored by Git and must never be committed.
+#if __has_include("farm_agent_secrets.h")
+  #include "farm_agent_secrets.h"
+#endif
+#ifndef FARM_AGENT_API_KEY
+  #define FARM_AGENT_API_KEY ""
+#endif
+
+/************************************
  *
  * Additional features
  *

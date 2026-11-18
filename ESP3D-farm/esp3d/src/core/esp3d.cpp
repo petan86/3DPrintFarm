@@ -62,6 +62,9 @@
 #if defined(USB_SERIAL_FEATURE)
 #include "../modules/usb-serial/usb_serial_service.h"
 #endif  // USB_SERIAL_FEATURE
+#ifdef FARM_AGENT_FEATURE
+#include "../modules/farm_agent/farm_agent.h"
+#endif  // FARM_AGENT_FEATURE
 
 bool Esp3D::restart = false;
 
@@ -167,6 +170,9 @@ bool Esp3D::begin() {
 #endif  // ESP_AUTOSTART_FEATURE
 #endif  // GCODE_HOST_FEATURE
   esp3d_log("Esp3d Started");
+#ifdef FARM_AGENT_FEATURE
+  farm_agent.begin();
+#endif  // FARM_AGENT_FEATURE
   _started = true;
   return res;
 }
@@ -202,6 +208,9 @@ void Esp3D::handle() {
 #if defined(GCODE_HOST_FEATURE)
   esp3d_gcode_host.handle();
 #endif  // GCODE_HOST_FEATURE
+#ifdef FARM_AGENT_FEATURE
+  farm_agent.handle();
+#endif  // FARM_AGENT_FEATURE
 
 #ifdef ESP_LUA_INTERPRETER_FEATURE
   esp3d_lua_interpreter.handle();

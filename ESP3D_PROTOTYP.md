@@ -12,6 +12,12 @@ Firmware ESP3D 3.1.0 je nakonfigurovaný a úspěšně sestavený pro desku
 - cílový firmware tiskárny: Marlin
 - autentizace ESP3D: zapnutá
 - Wi-Fi údaje: záměrně nejsou zakompilované; nastaví se při prvním spuštění
+- FarmAgent: zakompilovaný, ale deaktivovaný prázdným API klíčem
+- automatické převzetí úlohy: vypnuté do fyzického testu (`FARM_AGENT_AUTO_CLAIM`)
+
+Skutečný klíč tiskárny patří do kopie
+`ESP3D-farm/esp3d/farm_agent_secrets.h.example` pojmenované
+`farm_agent_secrets.h`. Tento soubor Git ignoruje.
 
 Výsledky sestavení:
 

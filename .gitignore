@@ -26,6 +26,7 @@ Thumbs.db
 !.env.example
 secrets.*
 credentials.*
+ESP3D-farm/esp3d/farm_agent_secrets.h
 
 # Raspberry Pi server runtime data
 server/data/
