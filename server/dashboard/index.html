@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101820">
+  <title>3DPrintFarm</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="login" class="login-layer">
+    <form id="login-form" class="login-card">
+      <div class="brand-mark">3D</div>
+      <p class="eyebrow">ŘÍDICÍ CENTRUM</p>
+      <h1>3DPrintFarm</h1>
+      <p class="muted">Zadejte administrátorský klíč serveru.</p>
+      <label for="admin-key">Administrátorský klíč</label>
+      <input id="admin-key" type="password" autocomplete="current-password" required>
+      <button type="submit" class="primary">Připojit k farmě</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark small">3D</span><span>PrintFarm</span></div>
+    <div class="top-actions">
+      <span id="connection" class="connection">Server offline</span>
+      <button id="refresh" class="ghost">Obnovit</button>
+      <button id="logout" class="ghost">Odhlásit</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">PŘEHLED PROVOZU</p>
+        <h1>Dobré ráno, farmo.</h1>
+        <p class="muted">Stav tiskáren, teploty a fronta na jednom místě.</p>
+      </div>
+      <div class="summary" aria-label="Souhrn farmy">
+        <div><strong id="count-printing">0</strong><span>Tiskne</span></div>
+        <div><strong id="count-waiting">0</strong><span>Čeká na obsluhu</span></div>
+        <div><strong id="count-idle">0</strong><span>Připraveno</span></div>
+        <div><strong id="count-offline">0</strong><span>Offline</span></div>
+      </div>
+    </section>
+
+    <section class="upload-panel">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button">
+        <div class="upload-icon">G</div>
+        <div><strong>Přetáhněte G-code do fronty</strong><span>nebo klikněte a vyberte soubor</span></div>
+        <input id="file-input" type="file" accept=".gcode,.gco,.gc" hidden>
+      </div>
+      <div id="upload-status" class="upload-status" aria-live="polite"></div>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading">
+        <div><p class="eyebrow">ZAŘÍZENÍ</p><h2>Tiskárny</h2></div>
+        <span id="printer-count" class="pill">0 / 40</span>
+      </div>
+      <div id="printers" class="printer-grid"></div>
+      <div id="empty-printers" class="empty">Zatím není registrovaná žádná tiskárna.</div>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading"><div><p class="eyebrow">PLÁN VÝROBY</p><h2>Tisková fronta</h2></div></div>
+      <div class="queue-wrap">
+        <table>
+          <thead><tr><th>Pořadí</th><th>Soubor</th><th>Stav</th><th>Tiskárna</th><th>Velikost</th></tr></thead>
+          <tbody id="jobs"></tbody>
+        </table>
+        <div id="empty-jobs" class="empty">Fronta je prázdná. Přetáhněte první G-code výše.</div>
+      </div>
+    </section>
+  </main>
+
+  <template id="printer-template">
+    <article class="printer-card">
+      <div class="card-head"><div><span class="status-dot"></span><span class="printer-state"></span></div><span class="last-seen"></span></div>
+      <h3 class="printer-name"></h3>
+      <div class="progress-row"><span>Průběh</span><strong class="progress-value"></strong></div>
+      <div class="progress-track"><span class="progress-bar"></span></div>
+      <div class="temperatures">
+        <div><span>Hotend</span><strong class="hotend"></strong></div>
+        <div><span>Podložka</span><strong class="bed"></strong></div>
+      </div>
+      <div class="attention">Vyžaduje potvrzení první vrstvy na tiskárně</div>
+    </article>
+  </template>
+  <script src="/app.js" defer></script>
+</body>
+</html>

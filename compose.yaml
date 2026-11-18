@@ -1,0 +1,22 @@
+services:
+  farm-server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: 3dprintfarm/server:local
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      FARM_ADMIN_KEY: "${FARM_ADMIN_KEY:?Set FARM_ADMIN_KEY in the .env file}"
+      FARM_DATA_DIR: /data
+    volumes:
+      - ./server/data:/data
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

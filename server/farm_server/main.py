@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .database import connection, data_dir, initialize
 from .schemas import JobStateUpdate, PrinterCreate, PrinterRegistered, Telemetry
@@ -235,4 +236,8 @@ def list_jobs():
             "SELECT * FROM jobs ORDER BY queue_position, created_at"
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+dashboard_dir = Path(__file__).resolve().parent.parent / "dashboard"
+app.mount("/", StaticFiles(directory=dashboard_dir, html=True), name="dashboard")
 

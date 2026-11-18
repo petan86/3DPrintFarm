@@ -1,0 +1,12 @@
+.git
+.git-upstream
+.venv*
+.platformio
+**/.pio
+**/.pioenvs
+**/__pycache__
+server/data
+Marlin-src
+Marlin_2125
+ESP3D-farm
+*.zip

@@ -25,6 +25,23 @@ kontroly rozměrů, pohybových parametrů, zapojení a revize BIQU MicroProbe.
 - [Protokol server ↔ ESP32](PROTOKOL_ESP32.md)
 - [FarmAgent v ESP3D](FARM_AGENT.md)
 
+## Dashboard a Docker
+
+Webový dashboard zobrazuje tiskárny, teploty, průběh, tiskovou frontu a
+výrazné upozornění na lokální potvrzení první vrstvy. G-code lze přidat
+přetažením do prohlížeče.
+
+Rychlé spuštění na Raspberry Pi:
+
+```bash
+cp server/.env.example .env
+# nastavte FARM_ADMIN_KEY v souboru .env
+docker compose up -d --build
+```
+
+Dashboard pak poběží na `http://<IP-RASPBERRY-PI>:8000/` a dokumentace API
+na `http://<IP-RASPBERRY-PI>:8000/docs`.
+
 ## Licence třetích stran
 
 Adresáře `Marlin-src`, `Marlin_2125` a `ESP3D-farm` obsahují nebo vycházejí

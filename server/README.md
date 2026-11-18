@@ -15,6 +15,22 @@ $env:FARM_DATA_DIR = ".\server\data"
 
 Dokumentace API bude na `http://127.0.0.1:8000/docs`.
 
+Dashboard bude na `http://127.0.0.1:8000/`.
+
+## Docker na Raspberry Pi
+
+Z kořene repozitáře:
+
+```bash
+cp server/.env.example .env
+# V .env nastavte dlouhý náhodný FARM_ADMIN_KEY.
+docker compose up -d --build
+docker compose ps
+```
+
+Data a G-code zůstávají na hostiteli v `server/data`. Kontejner běží pod
+neprivilegovaným uživatelem a po restartu Raspberry Pi se automaticky spustí.
+
 ## Základní protokol
 
 - Administrace posílá hlavičku `X-Admin-Key`.
