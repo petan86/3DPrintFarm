@@ -30,3 +30,15 @@ class Telemetry(BaseModel):
     bed_target: float | None = None
     material: str | None = Field(default=None, max_length=64)
 
+
+JobState = Literal[
+    "downloading", "ready", "heating", "leveling",
+    "waiting_local_approval", "printing", "paused", "complete", "error",
+]
+
+
+class JobStateUpdate(BaseModel):
+    state: JobState
+    progress: float = Field(default=0, ge=0, le=100)
+    message: str | None = Field(default=None, max_length=256)
+

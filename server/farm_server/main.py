@@ -10,10 +10,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Response, UploadFile, status
+from fastapi.responses import FileResponse
 
 from .database import connection, data_dir, initialize
-from .schemas import PrinterCreate, PrinterRegistered, Telemetry
+from .schemas import JobStateUpdate, PrinterCreate, PrinterRegistered, Telemetry
 
 
 def now() -> str:
@@ -106,6 +107,94 @@ def update_telemetry(payload: Telemetry, printer=Depends(require_printer)):
             ),
         )
     return {"accepted": True}
+
+
+@app.post("/api/printer/next-job")
+def claim_next_job(printer=Depends(require_printer)):
+    """Atomically assign the oldest queued job to this printer."""
+    with connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        active = db.execute(
+            """SELECT id, original_name, size_bytes, status FROM jobs
+               WHERE printer_id=? AND status NOT IN ('complete', 'error')
+               ORDER BY queue_position LIMIT 1""",
+            (printer["id"],),
+        ).fetchone()
+        if active is None:
+            active = db.execute(
+                """SELECT id, original_name, size_bytes, status FROM jobs
+                   WHERE status='queued' AND printer_id IS NULL
+                   ORDER BY queue_position, created_at LIMIT 1"""
+            ).fetchone()
+            if active is not None:
+                db.execute(
+                    "UPDATE jobs SET printer_id=?, status='assigned' WHERE id=?",
+                    (printer["id"], active["id"]),
+                )
+                db.execute(
+                    "UPDATE printers SET status='queued', last_seen=? WHERE id=?",
+                    (now(), printer["id"]),
+                )
+        if active is None:
+            db.execute(
+                "UPDATE printers SET last_seen=? WHERE id=?",
+                (now(), printer["id"]),
+            )
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    return {
+        "id": active["id"],
+        "name": active["original_name"],
+        "size_bytes": active["size_bytes"],
+        "status": active["status"] if active["status"] != "queued" else "assigned",
+        "download_url": f"/api/printer/jobs/{active['id']}/file",
+    }
+
+
+@app.get("/api/printer/jobs/{job_id}/file")
+def download_job(job_id: str, printer=Depends(require_printer)):
+    with connection() as db:
+        job = db.execute(
+            """SELECT original_name, stored_name FROM jobs
+               WHERE id=? AND printer_id=?""",
+            (job_id, printer["id"]),
+        ).fetchone()
+    if job is None:
+        raise HTTPException(404, "Job not assigned to this printer")
+    path = data_dir() / "jobs" / job["stored_name"]
+    if not path.is_file():
+        raise HTTPException(410, "G-code file is missing")
+    return FileResponse(path, filename=job["original_name"], media_type="text/x.gcode")
+
+
+@app.post("/api/printer/jobs/{job_id}/state")
+def update_job_state(
+    job_id: str,
+    payload: JobStateUpdate,
+    printer=Depends(require_printer),
+):
+    with connection() as db:
+        job = db.execute(
+            "SELECT id FROM jobs WHERE id=? AND printer_id=?",
+            (job_id, printer["id"]),
+        ).fetchone()
+        if job is None:
+            raise HTTPException(404, "Job not assigned to this printer")
+
+        started_at = now() if payload.state == "printing" else None
+        finished_at = now() if payload.state in ("complete", "error") else None
+        db.execute(
+            """UPDATE jobs SET status=?, status_message=?,
+               started_at=COALESCE(started_at, ?),
+               finished_at=COALESCE(finished_at, ?)
+               WHERE id=?""",
+            (payload.state, payload.message, started_at, finished_at, job_id),
+        )
+        db.execute(
+            "UPDATE printers SET status=?, progress=?, last_seen=? WHERE id=?",
+            (payload.state, payload.progress, now(), printer["id"]),
+        )
+    return {"accepted": True, "job_id": job_id, "state": payload.state}
 
 
 @app.post("/api/jobs", dependencies=[Depends(require_admin)], status_code=201)

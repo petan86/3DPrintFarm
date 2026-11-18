@@ -22,6 +22,7 @@ kontroly rozměrů, pohybových parametrů, zapojení a revize BIQU MicroProbe.
 - [ESP32 hardware](ESP_HARDWARE.md)
 - [ESP3D prototyp](ESP3D_PROTOTYP.md)
 - [Stav firmwaru](STAV_FIRMWARE.md)
+- [Protokol server ↔ ESP32](PROTOKOL_ESP32.md)
 
 ## Licence třetích stran
 

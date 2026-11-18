@@ -21,5 +21,6 @@ Dokumentace API bude na `http://127.0.0.1:8000/docs`.
 - Každá tiskárna dostane při registraci vlastní jednorázově zobrazený klíč.
 - ESP32 posílá svůj klíč v hlavičce `X-Printer-Key`.
 - Stav `waiting_local_approval` označuje čekání před první vrstvou.
+- Podrobný cyklus agenta je v `../PROTOKOL_ESP32.md`.
 
 Data v `server/data` jsou provozní a nepatří do Git repozitáře.

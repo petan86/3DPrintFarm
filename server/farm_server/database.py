@@ -59,6 +59,7 @@ def initialize() -> None:
                 created_at TEXT NOT NULL,
                 started_at TEXT,
                 finished_at TEXT,
+                status_message TEXT,
                 FOREIGN KEY (printer_id) REFERENCES printers(id)
             );
 
@@ -66,4 +67,9 @@ def initialize() -> None:
             ON jobs(status, queue_position);
             """
         )
+
+        # Lightweight migration for databases created by an earlier prototype.
+        columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
+        if "status_message" not in columns:
+            db.execute("ALTER TABLE jobs ADD COLUMN status_message TEXT")
 
