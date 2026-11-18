@@ -34,3 +34,22 @@ enkodérem na LCD. Server tento krok nesmí vzdáleně obejít.
 - Opakované volání `next-job` vrací již aktivní úlohu stejné tiskárny, takže
   restart ESP32 nevytvoří druhou rezervaci.
 - Stahovaný G-code je dostupný pouze tiskárně, které server úlohu přidělil.
+
+## Markery v počátečním G-code
+
+FarmAgent pasivně sleduje odpovědi Marlinu. Slicer nebo server vloží do
+počátečního G-code jednoznačné host-action zprávy:
+
+```gcode
+M118 A1 P0 action:notification FARM_HEATING
+; příkazy pro nahřátí
+M118 A1 P0 action:notification FARM_LEVELING
+G28
+G29
+M118 A1 P0 action:notification FARM_WAITING_LOCAL_APPROVAL
+M0 Potvrdte prvni vrstvu
+M118 A1 P0 action:notification FARM_PRINTING
+```
+
+`M0` zastaví provádění před první tiskovou vrstvou a pokračování provede
+obsluha enkodérem LCD. Zpráva `FARM_PRINTING` se odešle až po tomto potvrzení.

@@ -13,6 +13,14 @@ FarmAgent farm_agent;
 uint32_t FarmAgent::_nextPoll = 0;
 bool FarmAgent::_busy = false;
 String FarmAgent::_activeJobId;
+String FarmAgent::_printerState = "idle";
+float FarmAgent::_progress = 0;
+float FarmAgent::_hotendCurrent = NAN;
+float FarmAgent::_hotendTarget = NAN;
+float FarmAgent::_bedCurrent = NAN;
+float FarmAgent::_bedTarget = NAN;
+uint32_t FarmAgent::_lastJobReport = 0;
+String FarmAgent::_lastReportedState;
 
 void FarmAgent::begin() {
   _nextPoll = millis() + 5000;
@@ -43,7 +51,7 @@ bool FarmAgent::postJson(const String& path, const String& body, String* respons
 
 void FarmAgent::poll() {
   _busy = true;
-  postJson("/api/printer/telemetry", "{\"status\":\"idle\",\"progress\":0}");
+  postJson("/api/printer/telemetry", telemetryJson());
 
   if (FARM_AGENT_AUTO_CLAIM && _activeJobId.length() == 0) {
     String response;
@@ -66,6 +74,74 @@ void FarmAgent::poll() {
     }
   }
   _busy = false;
+}
+
+void FarmAgent::observeSerial(const uint8_t* data, size_t size) {
+  if (!data || !size || size > 1024) return;
+  String line;
+  line.reserve(size + 1);
+  for (size_t i = 0; i < size; i++) {
+    if (data[i] != '\r' && data[i] != '\n') line += (char)data[i];
+  }
+
+  const bool hasHotend = parsePair(line, "T:", _hotendCurrent, _hotendTarget);
+  const bool hasBed = parsePair(line, "B:", _bedCurrent, _bedTarget);
+  if ((hasHotend || hasBed) && (_printerState == "idle" || _printerState == "ready")) {
+    const bool hotendHeating = !isnan(_hotendTarget) && _hotendTarget > 0 && _hotendCurrent < _hotendTarget - 3;
+    const bool bedHeating = !isnan(_bedTarget) && _bedTarget > 0 && _bedCurrent < _bedTarget - 3;
+    if (hotendHeating || bedHeating) _printerState = "heating";
+  }
+
+  const int progressAt = line.indexOf("M73 Progress:");
+  if (progressAt >= 0) {
+    const int valueAt = line.indexOf(':', progressAt);
+    if (valueAt >= 0) {
+      _progress = constrain(line.substring(valueAt + 1).toFloat(), 0.0f, 100.0f);
+      if (_progress > 0 && _progress < 100) _printerState = "printing";
+      if (_progress >= 100) _printerState = "complete";
+    }
+  }
+
+  if (line.indexOf("FARM_HEATING") >= 0) _printerState = "heating";
+  if (line.indexOf("FARM_LEVELING") >= 0) _printerState = "leveling";
+  if (line.indexOf("FARM_WAITING_LOCAL_APPROVAL") >= 0) _printerState = "waiting_local_approval";
+  if (line.indexOf("FARM_PRINTING") >= 0) _printerState = "printing";
+  if (line.indexOf("//action:pause") >= 0 || line.indexOf("//action:paused") >= 0) _printerState = "paused";
+  if (line.indexOf("//action:resume") >= 0 || line.indexOf("//action:resumed") >= 0) _printerState = "printing";
+  if (line.indexOf("//action:cancel") >= 0 || line.indexOf("//action:kill") >= 0) _printerState = "error";
+
+  if (_activeJobId.length()) {
+    if (_printerState == "waiting_local_approval" || _printerState == "paused" ||
+        _printerState == "printing" || _printerState == "complete" || _printerState == "error") {
+      const uint32_t current = millis();
+      if (_lastReportedState != _printerState || current - _lastJobReport >= 5000) {
+        reportJobState(_activeJobId, _printerState.c_str(), _progress);
+        _lastReportedState = _printerState;
+        _lastJobReport = current;
+      }
+      if (_printerState == "complete" || _printerState == "error") _activeJobId = "";
+    }
+  }
+}
+
+bool FarmAgent::parsePair(const String& line, const char* label, float& current, float& target) {
+  int at = line.indexOf(label);
+  if (at < 0) return false;
+  at += strlen(label);
+  current = line.substring(at).toFloat();
+  const int slash = line.indexOf('/', at);
+  if (slash >= 0) target = line.substring(slash + 1).toFloat();
+  return true;
+}
+
+String FarmAgent::telemetryJson() {
+  String body = String("{\"status\":\"") + _printerState + "\",\"progress\":" + String(_progress, 1);
+  if (!isnan(_hotendCurrent)) body += ",\"hotend_current\":" + String(_hotendCurrent, 1);
+  if (!isnan(_hotendTarget)) body += ",\"hotend_target\":" + String(_hotendTarget, 1);
+  if (!isnan(_bedCurrent)) body += ",\"bed_current\":" + String(_bedCurrent, 1);
+  if (!isnan(_bedTarget)) body += ",\"bed_target\":" + String(_bedTarget, 1);
+  body += "}";
+  return body;
 }
 
 bool FarmAgent::downloadJob(const String& jobId, const String& downloadUrl, const String& originalName) {

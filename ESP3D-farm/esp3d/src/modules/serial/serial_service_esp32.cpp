@@ -26,6 +26,9 @@
 #include "../../core/esp3d_string.h"
 #include "../authentication/authentication_service.h"
 #include "serial_service.h"
+#ifdef FARM_AGENT_FEATURE
+#include "../farm_agent/farm_agent.h"
+#endif  // FARM_AGENT_FEATURE
 
 #define SERIAL_COMMUNICATION_TIMEOUT 500
 
@@ -230,6 +233,9 @@ void ESP3DSerialService::handle() {
       esp3d_log("Serial in fifo size %d", _messagesInFIFO.size());
       ESP3DMessage *message = _messagesInFIFO.pop();
       if (message) {
+#ifdef FARM_AGENT_FEATURE
+        if (_id == MAIN_SERIAL) farm_agent.observeSerial(message->data, message->size);
+#endif  // FARM_AGENT_FEATURE
         esp3d_commands.process(message);
       } else {
         esp3d_log_e("Cannot create message");

@@ -23,6 +23,7 @@ kontroly rozměrů, pohybových parametrů, zapojení a revize BIQU MicroProbe.
 - [ESP3D prototyp](ESP3D_PROTOTYP.md)
 - [Stav firmwaru](STAV_FIRMWARE.md)
 - [Protokol server ↔ ESP32](PROTOKOL_ESP32.md)
+- [FarmAgent v ESP3D](FARM_AGENT.md)
 
 ## Licence třetích stran
 
