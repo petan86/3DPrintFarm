@@ -88,6 +88,14 @@ def initialize() -> None:
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS color_catalog (
+                code TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                hex_color TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
 
@@ -100,6 +108,19 @@ def initialize() -> None:
         db.executemany(
             "INSERT OR IGNORE INTO material_catalog(code, name, sort_order) VALUES(?, ?, ?)",
             default_materials,
+        )
+        default_colors = (
+            ("A", "Natural", "#DFC9A8", 1), ("B", "Traffic black", "#1D2024", 2),
+            ("C", "Metallic gray", "#8A9198", 3), ("D", "Traffic white", "#F4F4F2", 4),
+            ("E", "Traffic red", "#D92F2F", 5), ("F", "Traffic yellow", "#FFD229", 6),
+            ("G", "Pistachio green", "#93C572", 7), ("H", "Sky blue", "#70C4E3", 8),
+            ("J", "Vivid pink", "#F34D9B", 9), ("K", "Dijon mustard", "#C99B24", 10),
+            ("L", "Green grass", "#49A942", 11), ("X", "Libovolná", "#7C5CFC", 12),
+            ("Z", "Dle domluvy", "#B7BEC8", 13),
+        )
+        db.executemany(
+            "INSERT OR IGNORE INTO color_catalog(code, name, hex_color, sort_order) VALUES(?, ?, ?, ?)",
+            default_colors,
         )
 
         # Lightweight migration for databases created by an earlier prototype.

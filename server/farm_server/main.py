@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import connection, data_dir, initialize
-from .schemas import JobStateUpdate, MaterialCatalogCreate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
+from .schemas import ColorCatalogCreate, JobStateUpdate, MaterialCatalogCreate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
 
 
 def now() -> str:
@@ -207,6 +207,32 @@ def create_material(payload: MaterialCatalogCreate):
             raise HTTPException(409, "Kód nebo název materiálu již existuje") from exc
         raise
     return {"code": code, "name": name}
+
+
+@app.get("/api/colors", dependencies=[Depends(require_admin)])
+def list_colors():
+    with connection() as db:
+        rows = db.execute(
+            "SELECT code, name, hex_color FROM color_catalog ORDER BY sort_order, name"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/colors", dependencies=[Depends(require_admin)], status_code=201)
+def create_color(payload: ColorCatalogCreate):
+    code, name, hex_color = payload.code.strip(), payload.name.strip(), payload.hex_color.upper()
+    try:
+        with connection() as db:
+            order = db.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM color_catalog").fetchone()[0]
+            db.execute(
+                "INSERT INTO color_catalog(code, name, hex_color, sort_order) VALUES(?, ?, ?, ?)",
+                (code, name, hex_color, order),
+            )
+    except Exception as exc:
+        if "UNIQUE constraint" in str(exc):
+            raise HTTPException(409, "Kód nebo název barvy již existuje") from exc
+        raise
+    return {"code": code, "name": name, "hex_color": hex_color}
 
 
 @app.patch("/api/printers/{printer_id}/material", dependencies=[Depends(require_admin)])
