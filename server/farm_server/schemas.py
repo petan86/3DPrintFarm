@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 PrinterStatus = Literal[
@@ -68,4 +68,21 @@ class MaterialColorsUpdate(BaseModel):
 class PreheatRequest(BaseModel):
     hotend: int = Field(ge=0, le=300)
     bed: int = Field(ge=0, le=130)
+
+
+DEFAULT_HOTSPOT_SSID = "PrintFarm"
+
+
+class HotspotSettings(BaseModel):
+    enabled: bool = False
+    ssid: str = Field(default=DEFAULT_HOTSPOT_SSID, min_length=1, max_length=32)
+    password: str | None = Field(default=None, min_length=8, max_length=63)
+
+    @field_validator("ssid")
+    @classmethod
+    def ssid_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("SSID nesmí být prázdné")
+        return value
 

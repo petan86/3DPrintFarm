@@ -9,6 +9,7 @@ import binascii
 import re
 import secrets
 import shutil
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import connection, data_dir, initialize
-from .schemas import ColorCatalogCreate, JobStateUpdate, MaterialCatalogCreate, MaterialColorsUpdate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
+from .schemas import DEFAULT_HOTSPOT_SSID, ColorCatalogCreate, HotspotSettings, JobStateUpdate, MaterialCatalogCreate, MaterialColorsUpdate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
 
 
 def now() -> str:
@@ -229,6 +230,90 @@ def require_printer_exists(printer_id: str):
     if row is None:
         raise HTTPException(404, "Printer not found")
     return row
+
+
+HOTSPOT_CONNECTION = "PrintFarm-Hotspot"
+
+
+def hotspot_apply_enabled() -> bool:
+    return os.getenv("FARM_HOTSPOT_APPLY", "0") == "1"
+
+
+def run_nmcli(*args: str, timeout: int = 20, check: bool = True) -> subprocess.CompletedProcess:
+    """Run nmcli without a shell; errors never echo the command line (it may contain the Wi-Fi password)."""
+    try:
+        result = subprocess.run(["nmcli", *args], capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError as exc:
+        raise HTTPException(500, "Hotspot se nepodařilo aplikovat: nmcli není dostupné") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(504, "Hotspot se nepodařilo aplikovat: NetworkManager neodpověděl včas") from exc
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        reason = detail[-1] if detail else f"nmcli skončilo s kódem {result.returncode}"
+        raise HTTPException(500, f"Hotspot se nepodařilo aplikovat: {reason}")
+    return result
+
+
+def apply_hotspot(ssid: str, password: str, enabled: bool) -> str:
+    """Apply hotspot settings on the host through NetworkManager (Raspberry Pi OS Bookworm).
+
+    Only runs when FARM_HOTSPOT_APPLY=1; otherwise the settings are just stored, so the
+    form also works in a local preview or in a container without access to the host network.
+    """
+    if not hotspot_apply_enabled():
+        return "saved_not_applied"
+    interface = os.getenv("FARM_HOTSPOT_INTERFACE", "wlan0")
+    exists = run_nmcli("-t", "-f", "NAME", "connection", "show", HOTSPOT_CONNECTION, timeout=10, check=False).returncode == 0
+    if not exists:
+        run_nmcli("connection", "add", "type", "wifi", "ifname", interface,
+                  "con-name", HOTSPOT_CONNECTION, "autoconnect", "no", "ssid", ssid)
+    run_nmcli("connection", "modify", HOTSPOT_CONNECTION,
+              "connection.interface-name", interface,
+              "connection.autoconnect", "yes" if enabled else "no",
+              "802-11-wireless.ssid", ssid, "802-11-wireless.mode", "ap",
+              "802-11-wireless.band", "bg", "ipv4.method", "shared",
+              "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password)
+    if enabled:
+        run_nmcli("connection", "up", HOTSPOT_CONNECTION, timeout=45)
+        return "active"
+    active = run_nmcli("-t", "-f", "NAME", "connection", "show", "--active", timeout=10, check=False).stdout.splitlines()
+    if HOTSPOT_CONNECTION in active:
+        run_nmcli("connection", "down", HOTSPOT_CONNECTION, timeout=30)
+    return "disabled"
+
+
+@app.get("/api/settings/hotspot", dependencies=[Depends(require_admin)])
+def get_hotspot_settings():
+    with connection() as db:
+        values = {row["key"]: row["value"] for row in db.execute(
+            "SELECT key, value FROM app_settings WHERE key LIKE 'hotspot_%'"
+        )}
+    return {
+        "enabled": values.get("hotspot_enabled", "0") == "1",
+        "ssid": values.get("hotspot_ssid") or DEFAULT_HOTSPOT_SSID,
+        "has_password": bool(values.get("hotspot_password")),
+        "apply_available": hotspot_apply_enabled(),
+    }
+
+
+@app.put("/api/settings/hotspot", dependencies=[Depends(require_admin)])
+def save_hotspot_settings(payload: HotspotSettings):
+    with connection() as db:
+        current = db.execute("SELECT value FROM app_settings WHERE key='hotspot_password'").fetchone()
+        password = payload.password or (current["value"] if current else None)
+        if not password:
+            raise HTTPException(422, "Při prvním nastavení je nutné zadat heslo")
+        values = {
+            "hotspot_enabled": "1" if payload.enabled else "0",
+            "hotspot_ssid": payload.ssid.strip(),
+            "hotspot_password": password,
+        }
+        db.executemany(
+            "INSERT INTO app_settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            values.items(),
+        )
+    state = apply_hotspot(payload.ssid.strip(), password, payload.enabled)
+    return {"saved": True, "state": state}
 
 
 @app.delete("/api/printers/{printer_id}", dependencies=[Depends(require_admin)], status_code=204)

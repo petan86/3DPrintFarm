@@ -1,0 +1,13 @@
+// Allows the PrintFarm server (host user "printfarm", UID 10001 = container user)
+// to manage NetworkManager connections without an interactive session.
+// Install: sudo cp server/deploy/50-printfarm-hotspot.rules /etc/polkit-1/rules.d/
+polkit.addRule(function(action, subject) {
+    if (subject.user == "printfarm" &&
+        (action.id == "org.freedesktop.NetworkManager.settings.modify.system" ||
+         action.id == "org.freedesktop.NetworkManager.network-control" ||
+         action.id == "org.freedesktop.NetworkManager.enable-disable-wifi" ||
+         action.id == "org.freedesktop.NetworkManager.wifi.share.protected" ||
+         action.id == "org.freedesktop.NetworkManager.wifi.share.open")) {
+        return polkit.Result.YES;
+    }
+});

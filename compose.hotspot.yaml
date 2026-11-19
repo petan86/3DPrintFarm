@@ -1,0 +1,11 @@
+# Optional override for Raspberry Pi OS Bookworm: lets the server apply the
+# Wi-Fi hotspot through the host NetworkManager.
+#   docker compose -f compose.yaml -f compose.hotspot.yaml up -d --build
+# Requires the host polkit rule from server/deploy/ (see server/README.md).
+services:
+  farm-server:
+    environment:
+      FARM_HOTSPOT_APPLY: "1"
+      FARM_HOTSPOT_INTERFACE: "${FARM_HOTSPOT_INTERFACE:-wlan0}"
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket

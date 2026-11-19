@@ -107,6 +107,11 @@ def initialize() -> None:
                 FOREIGN KEY (material_code) REFERENCES material_catalog(code) ON DELETE CASCADE,
                 FOREIGN KEY (color_code) REFERENCES color_catalog(code) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
 
