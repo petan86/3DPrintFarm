@@ -89,7 +89,7 @@ def list_printers():
     with connection() as db:
         rows = db.execute(
             "SELECT id, name, status, progress, hotend_current, hotend_target, "
-            "bed_current, bed_target, material, last_seen, created_at "
+            "bed_current, bed_target, material, material_color, last_seen, created_at "
             "FROM printers ORDER BY name"
         ).fetchall()
     return [dict(row) for row in rows]
@@ -107,8 +107,11 @@ def require_printer_exists(printer_id: str):
 def set_material(printer_id: str, payload: MaterialUpdate):
     require_printer_exists(printer_id)
     with connection() as db:
-        db.execute("UPDATE printers SET material=? WHERE id=?", (payload.material.strip(), printer_id))
-    return {"accepted": True, "material": payload.material.strip()}
+        db.execute(
+            "UPDATE printers SET material=?, material_color=? WHERE id=?",
+            (payload.material.strip(), payload.color.strip(), printer_id),
+        )
+    return {"accepted": True, "material": payload.material.strip(), "color": payload.color.strip()}
 
 
 @app.post("/api/printers/{printer_id}/preheat", dependencies=[Depends(require_admin)], status_code=202)

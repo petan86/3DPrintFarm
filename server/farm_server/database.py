@@ -44,6 +44,7 @@ def initialize() -> None:
                 bed_current REAL,
                 bed_target REAL,
                 material TEXT,
+                material_color TEXT,
                 last_seen TEXT,
                 created_at TEXT NOT NULL
             );
@@ -83,4 +84,7 @@ def initialize() -> None:
         columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
         if "status_message" not in columns:
             db.execute("ALTER TABLE jobs ADD COLUMN status_message TEXT")
+        printer_columns = {row[1] for row in db.execute("PRAGMA table_info(printers)")}
+        if "material_color" not in printer_columns:
+            db.execute("ALTER TABLE printers ADD COLUMN material_color TEXT")
 

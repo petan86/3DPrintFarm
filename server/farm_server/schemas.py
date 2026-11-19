@@ -45,6 +45,7 @@ class JobStateUpdate(BaseModel):
 
 class MaterialUpdate(BaseModel):
     material: str = Field(min_length=1, max_length=64)
+    color: str = Field(min_length=1, max_length=64)
 
 
 class PreheatRequest(BaseModel):
