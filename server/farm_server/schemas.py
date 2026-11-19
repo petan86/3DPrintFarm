@@ -48,6 +48,11 @@ class MaterialUpdate(BaseModel):
     color: str = Field(min_length=1, max_length=64)
 
 
+class MaterialCatalogCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=16, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=64)
+
+
 class PreheatRequest(BaseModel):
     hotend: int = Field(ge=0, le=300)
     bed: int = Field(ge=0, le=130)

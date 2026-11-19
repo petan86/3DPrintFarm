@@ -77,7 +77,25 @@ def initialize() -> None:
                 acknowledged_at TEXT,
                 FOREIGN KEY (printer_id) REFERENCES printers(id)
             );
+
+            CREATE TABLE IF NOT EXISTS material_catalog (
+                code TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
+        )
+
+        default_materials = (
+            ("1", "ASA", 1), ("2", "ABS", 2), ("3", "CPE HG100", 3),
+            ("4", "CPE CF112", 4), ("5", "TPU 92 A", 5),
+            ("6", "TPU 98 A", 6), ("7", "PLA", 7),
+            ("0", "Dle domluvy", 8),
+        )
+        db.executemany(
+            "INSERT OR IGNORE INTO material_catalog(code, name, sort_order) VALUES(?, ?, ?)",
+            default_materials,
         )
 
         # Lightweight migration for databases created by an earlier prototype.

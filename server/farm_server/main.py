@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import connection, data_dir, initialize
-from .schemas import JobStateUpdate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
+from .schemas import JobStateUpdate, MaterialCatalogCreate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
 
 
 def now() -> str:
@@ -101,6 +101,34 @@ def require_printer_exists(printer_id: str):
     if row is None:
         raise HTTPException(404, "Printer not found")
     return row
+
+
+@app.get("/api/materials", dependencies=[Depends(require_admin)])
+def list_materials():
+    with connection() as db:
+        rows = db.execute(
+            "SELECT code, name FROM material_catalog ORDER BY sort_order, name"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/materials", dependencies=[Depends(require_admin)], status_code=201)
+def create_material(payload: MaterialCatalogCreate):
+    code, name = payload.code.strip(), payload.name.strip()
+    try:
+        with connection() as db:
+            order = db.execute(
+                "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM material_catalog"
+            ).fetchone()[0]
+            db.execute(
+                "INSERT INTO material_catalog(code, name, sort_order) VALUES(?, ?, ?)",
+                (code, name, order),
+            )
+    except Exception as exc:
+        if "UNIQUE constraint" in str(exc):
+            raise HTTPException(409, "Kód nebo název materiálu již existuje") from exc
+        raise
+    return {"code": code, "name": name}
 
 
 @app.patch("/api/printers/{printer_id}/material", dependencies=[Depends(require_admin)])
