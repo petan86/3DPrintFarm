@@ -65,6 +65,9 @@ def initialize() -> None:
                 status_message TEXT,
                 thumbnail_name TEXT,
                 assigned_printer_name TEXT,
+                required_material TEXT,
+                estimated_seconds INTEGER,
+                scheduling_message TEXT,
                 FOREIGN KEY (printer_id) REFERENCES printers(id)
             );
 
@@ -131,6 +134,12 @@ def initialize() -> None:
             db.execute("ALTER TABLE jobs ADD COLUMN thumbnail_name TEXT")
         if "assigned_printer_name" not in columns:
             db.execute("ALTER TABLE jobs ADD COLUMN assigned_printer_name TEXT")
+        if "required_material" not in columns:
+            db.execute("ALTER TABLE jobs ADD COLUMN required_material TEXT")
+        if "estimated_seconds" not in columns:
+            db.execute("ALTER TABLE jobs ADD COLUMN estimated_seconds INTEGER")
+        if "scheduling_message" not in columns:
+            db.execute("ALTER TABLE jobs ADD COLUMN scheduling_message TEXT")
         db.execute(
             """UPDATE jobs SET assigned_printer_name=(
                 SELECT name FROM printers WHERE printers.id=jobs.printer_id

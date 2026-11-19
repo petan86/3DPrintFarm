@@ -5,3 +5,5 @@
 ; thumbnail end
 G28
 M84
+; estimated printing time (normal mode) = 1h 2m 3s
+; filament_type = PLA

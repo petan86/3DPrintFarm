@@ -79,6 +79,60 @@ def extract_thumbnail(gcode_path: Path, job_id: str) -> str | None:
     return None
 
 
+def extract_gcode_metadata(gcode_path: Path) -> tuple[str | None, int | None]:
+    filament = None
+    estimated = None
+    with gcode_path.open("r", encoding="utf-8", errors="ignore") as source:
+        for line in source:
+            clean = line.strip().lstrip(";").strip()
+            if filament is None:
+                match = re.match(r"filament_type\s*=\s*([^,;]+)", clean, re.IGNORECASE)
+                if match:
+                    filament = match.group(1).strip()
+            if estimated is None and "estimated printing time" in clean.lower():
+                value = clean.split("=", 1)[-1]
+                hours = re.search(r"(\d+)h", value)
+                minutes = re.search(r"(\d+)m", value)
+                seconds = re.search(r"(\d+)s", value)
+                estimated = (int(hours.group(1)) * 3600 if hours else 0) + (int(minutes.group(1)) * 60 if minutes else 0) + (int(seconds.group(1)) if seconds else 0)
+    return filament, estimated or None
+
+
+def schedule_buffer() -> None:
+    """Reserve one compatible upcoming job for printers in earliest-finish order."""
+    with connection() as db:
+        queued = db.execute(
+            "SELECT id, required_material FROM jobs WHERE status='queued' AND printer_id IS NULL ORDER BY queue_position"
+        ).fetchall()
+        for job in queued:
+            printers = db.execute(
+                """SELECT p.id, p.name, p.material, p.status, p.progress, p.last_seen,
+                   COALESCE(active.estimated_seconds, 0) estimated_seconds
+                   FROM printers p LEFT JOIN jobs active ON active.printer_id=p.id
+                     AND active.status IN ('heating','leveling','waiting_local_approval','printing','paused')
+                   WHERE p.last_seen IS NOT NULL
+                     AND NOT EXISTS (SELECT 1 FROM jobs future WHERE future.printer_id=p.id
+                       AND future.status IN ('assigned','downloading','ready'))"""
+            ).fetchall()
+            online = [p for p in printers if (datetime.now(timezone.utc) - datetime.fromisoformat(p["last_seen"])).total_seconds() <= 30]
+            compatible = [p for p in online if not job["required_material"] or p["material"] == job["required_material"]]
+            if not compatible:
+                message = "Čeká na tiskárnu se správným filamentem" if job["required_material"] else "Čeká na dostupnou tiskárnu"
+                db.execute("UPDATE jobs SET scheduling_message=? WHERE id=?", (message, job["id"]))
+                continue
+            def remaining(printer):
+                if printer["status"] in ("idle", "complete"):
+                    return 0
+                estimate = printer["estimated_seconds"] or 10**9
+                return estimate * max(0, 100 - (printer["progress"] or 0)) / 100
+            printer = min(compatible, key=remaining)
+            db.execute(
+                """UPDATE jobs SET printer_id=?, assigned_printer_name=?, status='assigned',
+                   scheduling_message='Naplánováno podle nejkratšího zbývajícího času' WHERE id=?""",
+                (printer["id"], printer["name"], job["id"]),
+            )
+
+
 def require_admin(x_admin_key: str = Header(default="")) -> None:
     expected = os.getenv("FARM_ADMIN_KEY", "")
     if not expected:
@@ -243,6 +297,7 @@ def set_material(printer_id: str, payload: MaterialUpdate):
             "UPDATE printers SET material=?, material_color=? WHERE id=?",
             (payload.material.strip(), payload.color.strip(), printer_id),
         )
+    schedule_buffer()
     return {"accepted": True, "material": payload.material.strip(), "color": payload.color.strip()}
 
 
@@ -284,6 +339,7 @@ def update_telemetry(payload: Telemetry, printer=Depends(require_printer)):
                 payload.material, now(), printer["id"],
             ),
         )
+    schedule_buffer()
     return {"accepted": True}
 
 
@@ -385,11 +441,12 @@ def update_job_state(
             "UPDATE printers SET status=?, progress=?, last_seen=? WHERE id=?",
             (payload.state, payload.progress, now(), printer["id"]),
         )
+    schedule_buffer()
     return {"accepted": True, "job_id": job_id, "state": payload.state}
 
 
 @app.post("/api/jobs", dependencies=[Depends(require_admin)], status_code=201)
-def upload_job(file: UploadFile = File(...), printer_id: str | None = Form(default=None)):
+def upload_job(file: UploadFile = File(...), printer_id: str | None = Form(default=None), required_material: str | None = Form(default=None)):
     original_name = Path(file.filename or "").name
     if not original_name.lower().endswith((".gcode", ".gco", ".gc")):
         raise HTTPException(415, "Only G-code files are accepted")
@@ -411,6 +468,7 @@ def upload_job(file: UploadFile = File(...), printer_id: str | None = Form(defau
         raise HTTPException(400, "G-code file is empty")
 
     thumbnail_name = extract_thumbnail(destination, job_id)
+    detected_filament, estimated_seconds = extract_gcode_metadata(destination)
 
     with connection() as db:
         position = db.execute(
@@ -420,14 +478,22 @@ def upload_job(file: UploadFile = File(...), printer_id: str | None = Form(defau
         printer_name = None
         if printer_id:
             printer_name = db.execute("SELECT name FROM printers WHERE id=?", (printer_id,)).fetchone()[0]
+        if not required_material and detected_filament:
+            material_row = db.execute(
+                "SELECT code FROM material_catalog WHERE UPPER(name)=UPPER(?)", (detected_filament,)
+            ).fetchone()
+            required_material = material_row[0] if material_row else None
         db.execute(
             """INSERT INTO jobs(id, original_name, stored_name, size_bytes,
-               status, printer_id, queue_position, created_at, thumbnail_name, assigned_printer_name)
-               VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (job_id, original_name, stored_name, size, job_status, printer_id, position, now(), thumbnail_name, printer_name),
+               status, printer_id, queue_position, created_at, thumbnail_name, assigned_printer_name,
+               required_material, estimated_seconds)
+               VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (job_id, original_name, stored_name, size, job_status, printer_id, position, now(), thumbnail_name, printer_name, required_material, estimated_seconds),
         )
         if printer_id:
             db.execute("UPDATE printers SET status='queued' WHERE id=?", (printer_id,))
+    if not printer_id:
+        schedule_buffer()
     return {"id": job_id, "name": original_name, "size_bytes": size,
             "queue_position": position, "printer_id": printer_id, "status": job_status}
 
