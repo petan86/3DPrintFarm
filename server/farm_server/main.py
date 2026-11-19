@@ -130,10 +130,14 @@ def register_printer(payload: PrinterCreate):
                     "SELECT rack, rack_slot FROM printers WHERE rack IS NOT NULL"
                 )
             }
-            position = next(
+            if (payload.rack is None) != (payload.rack_slot is None):
+                raise HTTPException(422, "Regál a pozice musí být zadány společně")
+            requested = (payload.rack, payload.rack_slot) if payload.rack else None
+            if requested and requested in occupied:
+                raise HTTPException(409, "Vybraná pozice je již obsazená")
+            position = requested or next(
                 ((rack, slot) for rack in ("A", "B", "C") for slot in range(1, 11)
-                 if (rack, slot) not in occupied),
-                None,
+                 if (rack, slot) not in occupied), None,
             )
             if position is None:
                 raise HTTPException(409, "V regálech není volná pozice")

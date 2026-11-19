@@ -13,6 +13,8 @@ PrinterStatus = Literal[
 
 class PrinterCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
+    rack: Literal["A", "B", "C"] | None = None
+    rack_slot: int | None = Field(default=None, ge=1, le=10)
 
 
 class PrinterRegistered(BaseModel):
