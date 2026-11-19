@@ -1,4 +1,5 @@
 nav button{display:block;width:100%;padding:15px 24px;border:0;background:transparent;color:#d8e0ea;text-align:left}
+[hidden]{display:none!important}
 nav button.active{background:var(--orange);color:white}
 .farm-grid.list-view{grid-template-columns:repeat(auto-fit,minmax(230px,1fr));align-content:start}
 .info-card{padding:20px;border:1px solid #dce3eb;border-radius:12px;background:#f7f9fc;min-height:120px}

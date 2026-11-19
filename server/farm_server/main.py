@@ -179,6 +179,12 @@ def register_printer(payload: PrinterCreate):
     api_key = secrets.token_urlsafe(32)
     try:
         with connection() as db:
+            existing_name = db.execute(
+                "SELECT rack, rack_slot FROM printers WHERE name=?", (payload.name.strip(),)
+            ).fetchone()
+            if existing_name:
+                position_name = f"{existing_name['rack']}{existing_name['rack_slot']:02d}"
+                raise HTTPException(409, f"Tento název už používá tiskárna na pozici {position_name}")
             occupied = {
                 (row[0], row[1]) for row in db.execute(
                     "SELECT rack, rack_slot FROM printers WHERE rack IS NOT NULL"
@@ -201,7 +207,7 @@ def register_printer(payload: PrinterCreate):
             )
     except Exception as exc:
         if "UNIQUE constraint" in str(exc):
-            raise HTTPException(409, "Printer name already exists") from exc
+            raise HTTPException(409, "Tiskárna s tímto názvem již existuje") from exc
         raise
     return PrinterRegistered(id=printer_id, name=payload.name.strip(), api_key=api_key)
 
