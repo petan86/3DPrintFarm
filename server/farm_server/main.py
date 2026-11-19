@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Response, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -244,10 +244,13 @@ def update_job_state(
 
 
 @app.post("/api/jobs", dependencies=[Depends(require_admin)], status_code=201)
-def upload_job(file: UploadFile = File(...)):
+def upload_job(file: UploadFile = File(...), printer_id: str | None = Form(default=None)):
     original_name = Path(file.filename or "").name
     if not original_name.lower().endswith((".gcode", ".gco", ".gc")):
         raise HTTPException(415, "Only G-code files are accepted")
+
+    if printer_id:
+        require_printer_exists(printer_id)
 
     job_id = str(uuid.uuid4())
     stored_name = f"{job_id}.gcode"
@@ -266,12 +269,16 @@ def upload_job(file: UploadFile = File(...)):
         position = db.execute(
             "SELECT COALESCE(MAX(queue_position), 0) + 1 FROM jobs"
         ).fetchone()[0]
+        job_status = "assigned" if printer_id else "queued"
         db.execute(
             """INSERT INTO jobs(id, original_name, stored_name, size_bytes,
-               queue_position, created_at) VALUES(?, ?, ?, ?, ?, ?)""",
-            (job_id, original_name, stored_name, size, position, now()),
+               status, printer_id, queue_position, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)""",
+            (job_id, original_name, stored_name, size, job_status, printer_id, position, now()),
         )
-    return {"id": job_id, "name": original_name, "size_bytes": size, "queue_position": position}
+        if printer_id:
+            db.execute("UPDATE printers SET status='queued' WHERE id=?", (printer_id,))
+    return {"id": job_id, "name": original_name, "size_bytes": size,
+            "queue_position": position, "printer_id": printer_id, "status": job_status}
 
 
 @app.get("/api/jobs", dependencies=[Depends(require_admin)])

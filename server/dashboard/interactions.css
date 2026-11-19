@@ -3,4 +3,5 @@ nav button.active{background:var(--orange);color:white}
 .farm-grid.list-view{grid-template-columns:repeat(auto-fit,minmax(230px,1fr));align-content:start}
 .info-card{padding:20px;border:1px solid #dce3eb;border-radius:12px;background:#f7f9fc;min-height:120px}
 .info-card h3{margin-top:0}.info-card strong{font-size:2rem}
+.printer-card.drop-target{outline:5px solid #fff;box-shadow:0 0 0 9px var(--orange),0 18px 35px #17263a55;transform:scale(1.04)}
 @media(max-width:1000px){nav button{font-size:0;padding:18px 25px}nav button::first-letter{font-size:1.2rem}}
