@@ -1,0 +1,6 @@
+nav button{display:block;width:100%;padding:15px 24px;border:0;background:transparent;color:#d8e0ea;text-align:left}
+nav button.active{background:var(--orange);color:white}
+.farm-grid.list-view{grid-template-columns:repeat(auto-fit,minmax(230px,1fr));align-content:start}
+.info-card{padding:20px;border:1px solid #dce3eb;border-radius:12px;background:#f7f9fc;min-height:120px}
+.info-card h3{margin-top:0}.info-card strong{font-size:2rem}
+@media(max-width:1000px){nav button{font-size:0;padding:18px 25px}nav button::first-letter{font-size:1.2rem}}
