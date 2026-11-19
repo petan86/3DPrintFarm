@@ -45,6 +45,8 @@ def initialize() -> None:
                 bed_target REAL,
                 material TEXT,
                 material_color TEXT,
+                rack TEXT,
+                rack_slot INTEGER,
                 last_seen TEXT,
                 created_at TEXT NOT NULL
             );
@@ -105,4 +107,29 @@ def initialize() -> None:
         printer_columns = {row[1] for row in db.execute("PRAGMA table_info(printers)")}
         if "material_color" not in printer_columns:
             db.execute("ALTER TABLE printers ADD COLUMN material_color TEXT")
+        if "rack" not in printer_columns:
+            db.execute("ALTER TABLE printers ADD COLUMN rack TEXT")
+        if "rack_slot" not in printer_columns:
+            db.execute("ALTER TABLE printers ADD COLUMN rack_slot INTEGER")
+
+        positioned = {
+            (row[0], row[1]) for row in db.execute(
+                "SELECT rack, rack_slot FROM printers WHERE rack IS NOT NULL AND rack_slot IS NOT NULL"
+            )
+        }
+        unpositioned = db.execute(
+            "SELECT id FROM printers WHERE rack IS NULL OR rack_slot IS NULL ORDER BY created_at, name"
+        ).fetchall()
+        free_positions = (
+            (rack, slot) for rack in ("A", "B", "C") for slot in range(1, 11)
+            if (rack, slot) not in positioned
+        )
+        for printer, position in zip(unpositioned, free_positions):
+            db.execute(
+                "UPDATE printers SET rack=?, rack_slot=? WHERE id=?",
+                (*position, printer[0]),
+            )
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_printers_rack_slot ON printers(rack, rack_slot)"
+        )
 

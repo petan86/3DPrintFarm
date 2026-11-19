@@ -73,9 +73,21 @@ def register_printer(payload: PrinterCreate):
     api_key = secrets.token_urlsafe(32)
     try:
         with connection() as db:
+            occupied = {
+                (row[0], row[1]) for row in db.execute(
+                    "SELECT rack, rack_slot FROM printers WHERE rack IS NOT NULL"
+                )
+            }
+            position = next(
+                ((rack, slot) for rack in ("A", "B", "C") for slot in range(1, 11)
+                 if (rack, slot) not in occupied),
+                None,
+            )
+            if position is None:
+                raise HTTPException(409, "V regálech není volná pozice")
             db.execute(
-                "INSERT INTO printers(id, name, api_key_hash, created_at) VALUES(?, ?, ?, ?)",
-                (printer_id, payload.name.strip(), key_hash(api_key), now()),
+                "INSERT INTO printers(id, name, api_key_hash, rack, rack_slot, created_at) VALUES(?, ?, ?, ?, ?, ?)",
+                (printer_id, payload.name.strip(), key_hash(api_key), *position, now()),
             )
     except Exception as exc:
         if "UNIQUE constraint" in str(exc):
@@ -89,8 +101,8 @@ def list_printers():
     with connection() as db:
         rows = db.execute(
             "SELECT id, name, status, progress, hotend_current, hotend_target, "
-            "bed_current, bed_target, material, material_color, last_seen, created_at "
-            "FROM printers ORDER BY name"
+            "bed_current, bed_target, material, material_color, rack, rack_slot, last_seen, created_at "
+            "FROM printers ORDER BY rack, rack_slot"
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -101,6 +113,16 @@ def require_printer_exists(printer_id: str):
     if row is None:
         raise HTTPException(404, "Printer not found")
     return row
+
+
+@app.delete("/api/printers/{printer_id}", dependencies=[Depends(require_admin)], status_code=204)
+def delete_printer(printer_id: str):
+    require_printer_exists(printer_id)
+    with connection() as db:
+        db.execute("DELETE FROM printer_commands WHERE printer_id=?", (printer_id,))
+        db.execute("UPDATE jobs SET printer_id=NULL WHERE printer_id=?", (printer_id,))
+        db.execute("DELETE FROM printers WHERE id=?", (printer_id,))
+    return Response(status_code=204)
 
 
 @app.get("/api/materials", dependencies=[Depends(require_admin)])
