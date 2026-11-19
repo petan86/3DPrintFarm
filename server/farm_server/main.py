@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import shutil
@@ -15,7 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import connection, data_dir, initialize
-from .schemas import JobStateUpdate, PrinterCreate, PrinterRegistered, Telemetry
+from .schemas import JobStateUpdate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
 
 
 def now() -> str:
@@ -90,6 +91,47 @@ def list_printers():
             "SELECT id, name, status, progress, hotend_current, hotend_target, "
             "bed_current, bed_target, material, last_seen, created_at "
             "FROM printers ORDER BY name"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def require_printer_exists(printer_id: str):
+    with connection() as db:
+        row = db.execute("SELECT id, name FROM printers WHERE id=?", (printer_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Printer not found")
+    return row
+
+
+@app.patch("/api/printers/{printer_id}/material", dependencies=[Depends(require_admin)])
+def set_material(printer_id: str, payload: MaterialUpdate):
+    require_printer_exists(printer_id)
+    with connection() as db:
+        db.execute("UPDATE printers SET material=? WHERE id=?", (payload.material.strip(), printer_id))
+    return {"accepted": True, "material": payload.material.strip()}
+
+
+@app.post("/api/printers/{printer_id}/preheat", dependencies=[Depends(require_admin)], status_code=202)
+def preheat(printer_id: str, payload: PreheatRequest):
+    require_printer_exists(printer_id)
+    command_id = str(uuid.uuid4())
+    with connection() as db:
+        db.execute(
+            "INSERT INTO printer_commands(id, printer_id, command, payload, created_at) VALUES(?, ?, ?, ?, ?)",
+            (command_id, printer_id, "preheat", json.dumps(payload.model_dump()), now()),
+        )
+    return {"accepted": True, "command_id": command_id}
+
+
+@app.get("/api/printers/{printer_id}/history", dependencies=[Depends(require_admin)])
+def printer_history(printer_id: str):
+    require_printer_exists(printer_id)
+    with connection() as db:
+        rows = db.execute(
+            """SELECT id, original_name, size_bytes, status, created_at, started_at,
+               finished_at, status_message FROM jobs WHERE printer_id=?
+               ORDER BY COALESCE(finished_at, started_at, created_at) DESC LIMIT 100""",
+            (printer_id,),
         ).fetchall()
     return [dict(row) for row in rows]
 

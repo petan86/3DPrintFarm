@@ -42,3 +42,12 @@ class JobStateUpdate(BaseModel):
     progress: float = Field(default=0, ge=0, le=100)
     message: str | None = Field(default=None, max_length=256)
 
+
+class MaterialUpdate(BaseModel):
+    material: str = Field(min_length=1, max_length=64)
+
+
+class PreheatRequest(BaseModel):
+    hotend: int = Field(ge=0, le=300)
+    bed: int = Field(ge=0, le=130)
+

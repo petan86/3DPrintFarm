@@ -65,6 +65,17 @@ def initialize() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_jobs_queue
             ON jobs(status, queue_position);
+
+            CREATE TABLE IF NOT EXISTS printer_commands (
+                id TEXT PRIMARY KEY,
+                printer_id TEXT NOT NULL,
+                command TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                acknowledged_at TEXT,
+                FOREIGN KEY (printer_id) REFERENCES printers(id)
+            );
             """
         )
 
