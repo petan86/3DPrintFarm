@@ -63,6 +63,8 @@ def initialize() -> None:
                 started_at TEXT,
                 finished_at TEXT,
                 status_message TEXT,
+                thumbnail_name TEXT,
+                assigned_printer_name TEXT,
                 FOREIGN KEY (printer_id) REFERENCES printers(id)
             );
 
@@ -104,6 +106,15 @@ def initialize() -> None:
         columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
         if "status_message" not in columns:
             db.execute("ALTER TABLE jobs ADD COLUMN status_message TEXT")
+        if "thumbnail_name" not in columns:
+            db.execute("ALTER TABLE jobs ADD COLUMN thumbnail_name TEXT")
+        if "assigned_printer_name" not in columns:
+            db.execute("ALTER TABLE jobs ADD COLUMN assigned_printer_name TEXT")
+        db.execute(
+            """UPDATE jobs SET assigned_printer_name=(
+                SELECT name FROM printers WHERE printers.id=jobs.printer_id
+            ) WHERE assigned_printer_name IS NULL AND printer_id IS NOT NULL"""
+        )
         printer_columns = {row[1] for row in db.execute("PRAGMA table_info(printers)")}
         if "material_color" not in printer_columns:
             db.execute("ALTER TABLE printers ADD COLUMN material_color TEXT")

@@ -4,6 +4,9 @@ import hashlib
 import hmac
 import json
 import os
+import base64
+import binascii
+import re
 import secrets
 import shutil
 import uuid
@@ -25,6 +28,55 @@ def now() -> str:
 
 def key_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+THUMBNAIL_BEGIN = re.compile(r"^;\s*thumbnail\s+begin\s+(\d+)x(\d+)\s+\d+", re.IGNORECASE)
+
+
+def extract_thumbnail(gcode_path: Path, job_id: str) -> str | None:
+    """Extract the largest embedded Orca/Prusa-style PNG or JPEG thumbnail."""
+    candidates: list[tuple[int, str]] = []
+    width = height = 0
+    encoded: list[str] | None = None
+    with gcode_path.open("r", encoding="utf-8", errors="ignore") as source:
+        for line_number, line in enumerate(source):
+            if line_number > 250_000:
+                break
+            match = THUMBNAIL_BEGIN.match(line.strip())
+            if match:
+                width, height = int(match.group(1)), int(match.group(2))
+                encoded = []
+                continue
+            if encoded is not None and re.match(r"^;\s*thumbnail\s+end", line.strip(), re.IGNORECASE):
+                candidates.append((width * height, "".join(encoded)))
+                encoded = None
+                continue
+            if encoded is not None:
+                part = line.strip().removeprefix(";").strip()
+                if part and len(part) <= 256:
+                    encoded.append(part)
+                if sum(map(len, encoded)) > 8_000_000:
+                    encoded = None
+
+    previews_dir = data_dir() / "previews"
+    for _, value in sorted(candidates, reverse=True):
+        try:
+            image = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError):
+            continue
+        if len(image) > 6_000_000:
+            continue
+        if image.startswith(b"\x89PNG\r\n\x1a\n"):
+            extension = "png"
+        elif image.startswith(b"\xff\xd8\xff"):
+            extension = "jpg"
+        else:
+            continue
+        previews_dir.mkdir(parents=True, exist_ok=True)
+        name = f"{job_id}.{extension}"
+        (previews_dir / name).write_bytes(image)
+        return name
+    return None
 
 
 def require_admin(x_admin_key: str = Header(default="")) -> None:
@@ -224,8 +276,8 @@ def claim_next_job(printer=Depends(require_printer)):
             ).fetchone()
             if active is not None:
                 db.execute(
-                    "UPDATE jobs SET printer_id=?, status='assigned' WHERE id=?",
-                    (printer["id"], active["id"]),
+                    "UPDATE jobs SET printer_id=?, assigned_printer_name=?, status='assigned' WHERE id=?",
+                    (printer["id"], printer["name"], active["id"]),
                 )
                 db.execute(
                     "UPDATE printers SET status='queued', last_seen=? WHERE id=?",
@@ -261,6 +313,19 @@ def download_job(job_id: str, printer=Depends(require_printer)):
     if not path.is_file():
         raise HTTPException(410, "G-code file is missing")
     return FileResponse(path, filename=job["original_name"], media_type="text/x.gcode")
+
+
+@app.get("/api/jobs/{job_id}/thumbnail", dependencies=[Depends(require_admin)])
+def job_thumbnail(job_id: str):
+    with connection() as db:
+        job = db.execute("SELECT thumbnail_name FROM jobs WHERE id=?", (job_id,)).fetchone()
+    if job is None or not job["thumbnail_name"]:
+        raise HTTPException(404, "Thumbnail not found")
+    path = data_dir() / "previews" / job["thumbnail_name"]
+    if not path.is_file():
+        raise HTTPException(410, "Thumbnail file is missing")
+    media_type = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(path, media_type=media_type)
 
 
 @app.post("/api/printer/jobs/{job_id}/state")
@@ -315,15 +380,21 @@ def upload_job(file: UploadFile = File(...), printer_id: str | None = Form(defau
         destination.unlink(missing_ok=True)
         raise HTTPException(400, "G-code file is empty")
 
+    thumbnail_name = extract_thumbnail(destination, job_id)
+
     with connection() as db:
         position = db.execute(
             "SELECT COALESCE(MAX(queue_position), 0) + 1 FROM jobs"
         ).fetchone()[0]
         job_status = "assigned" if printer_id else "queued"
+        printer_name = None
+        if printer_id:
+            printer_name = db.execute("SELECT name FROM printers WHERE id=?", (printer_id,)).fetchone()[0]
         db.execute(
             """INSERT INTO jobs(id, original_name, stored_name, size_bytes,
-               status, printer_id, queue_position, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)""",
-            (job_id, original_name, stored_name, size, job_status, printer_id, position, now()),
+               status, printer_id, queue_position, created_at, thumbnail_name, assigned_printer_name)
+               VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (job_id, original_name, stored_name, size, job_status, printer_id, position, now(), thumbnail_name, printer_name),
         )
         if printer_id:
             db.execute("UPDATE printers SET status='queued' WHERE id=?", (printer_id,))
@@ -337,7 +408,12 @@ def list_jobs():
         rows = db.execute(
             "SELECT * FROM jobs ORDER BY queue_position, created_at"
         ).fetchall()
-    return [dict(row) for row in rows]
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["thumbnail_url"] = f"/api/jobs/{item['id']}/thumbnail" if item.get("thumbnail_name") else None
+        result.append(item)
+    return result
 
 
 dashboard_dir = Path(__file__).resolve().parent.parent / "dashboard"
