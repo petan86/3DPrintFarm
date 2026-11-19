@@ -99,6 +99,14 @@ def initialize() -> None:
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS material_colors (
+                material_code TEXT NOT NULL,
+                color_code TEXT NOT NULL,
+                PRIMARY KEY (material_code, color_code),
+                FOREIGN KEY (material_code) REFERENCES material_catalog(code) ON DELETE CASCADE,
+                FOREIGN KEY (color_code) REFERENCES color_catalog(code) ON DELETE CASCADE
+            );
             """
         )
 
@@ -125,6 +133,12 @@ def initialize() -> None:
             "INSERT OR IGNORE INTO color_catalog(code, name, hex_color, sort_order) VALUES(?, ?, ?, ?)",
             default_colors,
         )
+        if db.execute("SELECT COUNT(*) FROM material_colors").fetchone()[0] == 0:
+            db.execute(
+                """INSERT INTO material_colors(material_code, color_code)
+                   SELECT material_catalog.code, color_catalog.code
+                   FROM material_catalog CROSS JOIN color_catalog"""
+            )
 
         # Lightweight migration for databases created by an earlier prototype.
         columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}

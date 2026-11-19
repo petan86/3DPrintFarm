@@ -61,6 +61,10 @@ class ColorCatalogCreate(BaseModel):
     hex_color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
+class MaterialColorsUpdate(BaseModel):
+    color_codes: list[str] = Field(max_length=100)
+
+
 class PreheatRequest(BaseModel):
     hotend: int = Field(ge=0, le=300)
     bed: int = Field(ge=0, le=130)

@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import connection, data_dir, initialize
-from .schemas import ColorCatalogCreate, JobStateUpdate, MaterialCatalogCreate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
+from .schemas import ColorCatalogCreate, JobStateUpdate, MaterialCatalogCreate, MaterialColorsUpdate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
 
 
 def now() -> str:
@@ -247,7 +247,15 @@ def list_materials():
         rows = db.execute(
             "SELECT code, name FROM material_catalog ORDER BY sort_order, name"
         ).fetchall()
-    return [dict(row) for row in rows]
+        mappings = db.execute(
+            "SELECT material_code, color_code FROM material_colors ORDER BY color_code"
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["color_codes"] = [m["color_code"] for m in mappings if m["material_code"] == row["code"]]
+        result.append(item)
+    return result
 
 
 @app.post("/api/materials", dependencies=[Depends(require_admin)], status_code=201)
@@ -267,6 +275,27 @@ def create_material(payload: MaterialCatalogCreate):
             raise HTTPException(409, "Kód nebo název materiálu již existuje") from exc
         raise
     return {"code": code, "name": name}
+
+
+@app.put("/api/materials/{material_code}/colors", dependencies=[Depends(require_admin)])
+def set_material_colors(material_code: str, payload: MaterialColorsUpdate):
+    unique_codes = list(dict.fromkeys(code.strip() for code in payload.color_codes))
+    with connection() as db:
+        if db.execute("SELECT 1 FROM material_catalog WHERE code=?", (material_code,)).fetchone() is None:
+            raise HTTPException(404, "Materiál nebyl nalezen")
+        if unique_codes:
+            placeholders = ",".join("?" for _ in unique_codes)
+            count = db.execute(
+                f"SELECT COUNT(*) FROM color_catalog WHERE code IN ({placeholders})", unique_codes
+            ).fetchone()[0]
+            if count != len(unique_codes):
+                raise HTTPException(422, "Některá barva neexistuje")
+        db.execute("DELETE FROM material_colors WHERE material_code=?", (material_code,))
+        db.executemany(
+            "INSERT INTO material_colors(material_code, color_code) VALUES(?, ?)",
+            ((material_code, code) for code in unique_codes),
+        )
+    return {"material_code": material_code, "color_codes": unique_codes}
 
 
 @app.get("/api/colors", dependencies=[Depends(require_admin)])
@@ -299,6 +328,12 @@ def create_color(payload: ColorCatalogCreate):
 def set_material(printer_id: str, payload: MaterialUpdate):
     require_printer_exists(printer_id)
     with connection() as db:
+        allowed = db.execute(
+            "SELECT 1 FROM material_colors WHERE material_code=? AND color_code=?",
+            (payload.material.strip(), payload.color.strip()),
+        ).fetchone()
+        if allowed is None:
+            raise HTTPException(422, "Tato barva není pro vybraný materiál povolena")
         db.execute(
             "UPDATE printers SET material=?, material_color=? WHERE id=?",
             (payload.material.strip(), payload.color.strip(), printer_id),
