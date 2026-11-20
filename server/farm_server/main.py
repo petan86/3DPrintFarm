@@ -15,11 +15,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import connection, data_dir, initialize
+from .schemas import JobMaterialUpdate, JobQuantityUpdate
 from .schemas import DEFAULT_HOTSPOT_SSID, ColorCatalogCreate, HotspotSettings, JobStateUpdate, MaterialCatalogCreate, MaterialColorsUpdate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
 
 
@@ -31,7 +32,7 @@ def key_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-THUMBNAIL_BEGIN = re.compile(r"^;\s*thumbnail\s+begin\s+(\d+)x(\d+)\s+\d+", re.IGNORECASE)
+THUMBNAIL_BEGIN = re.compile(r"^;\s*thumbnail(?:_PNG|_JPG|_JPEG)?\s+begin\s+(\d+)x(\d+)\s+\d+", re.IGNORECASE)
 
 
 def extract_thumbnail(gcode_path: Path, job_id: str) -> str | None:
@@ -48,7 +49,7 @@ def extract_thumbnail(gcode_path: Path, job_id: str) -> str | None:
                 width, height = int(match.group(1)), int(match.group(2))
                 encoded = []
                 continue
-            if encoded is not None and re.match(r"^;\s*thumbnail\s+end", line.strip(), re.IGNORECASE):
+            if encoded is not None and re.match(r"^;\s*thumbnail(?:_PNG|_JPG|_JPEG)?\s+end", line.strip(), re.IGNORECASE):
                 candidates.append((width * height, "".join(encoded)))
                 encoded = None
                 continue
@@ -142,7 +143,7 @@ def require_admin(x_admin_key: str = Header(default="")) -> None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid admin key")
 
 
-def require_printer(x_printer_key: str = Header(default="")):
+def require_printer(request: Request, x_printer_key: str = Header(default="")):
     if not x_printer_key:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing printer key")
     with connection() as db:
@@ -150,14 +151,25 @@ def require_printer(x_printer_key: str = Header(default="")):
             "SELECT * FROM printers WHERE api_key_hash = ?",
             (key_hash(x_printer_key),),
         ).fetchone()
-    if row is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid printer key")
+        if row is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid printer key")
+        db.execute(
+            "UPDATE printers SET ip_address=?, last_contact=? WHERE id=?",
+            (request.client.host if request.client else None, now(), row["id"]),
+        )
     return dict(row)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize()
+    with connection() as db:
+        for job in db.execute("SELECT id, stored_name FROM jobs WHERE thumbnail_name IS NULL").fetchall():
+            source = data_dir() / "jobs" / job["stored_name"]
+            if source.is_file():
+                thumbnail = extract_thumbnail(source, job["id"])
+                if thumbnail:
+                    db.execute("UPDATE jobs SET thumbnail_name=? WHERE id=?", (thumbnail, job["id"]))
     yield
 
 
@@ -280,6 +292,22 @@ def apply_hotspot(ssid: str, password: str, enabled: bool) -> str:
     if HOTSPOT_CONNECTION in active:
         run_nmcli("connection", "down", HOTSPOT_CONNECTION, timeout=30)
     return "disabled"
+
+
+@app.get("/api/settings/devices", dependencies=[Depends(require_admin)])
+def get_connected_devices():
+    with connection() as db:
+        rows = db.execute(
+            "SELECT id, name, rack, rack_slot, ip_address, last_contact FROM printers ORDER BY name"
+        ).fetchall()
+    timestamp = datetime.now(timezone.utc)
+    devices = []
+    for row in rows:
+        device = dict(row)
+        device["online"] = bool(row["last_contact"] and
+            (timestamp - datetime.fromisoformat(row["last_contact"])).total_seconds() <= 30)
+        devices.append(device)
+    return {"devices": devices}
 
 
 @app.get("/api/settings/hotspot", dependencies=[Depends(require_admin)])
@@ -484,7 +512,9 @@ def claim_next_job(printer=Depends(require_printer)):
             active = db.execute(
                 """SELECT id, original_name, size_bytes, status FROM jobs
                    WHERE status='queued' AND printer_id IS NULL
-                   ORDER BY queue_position, created_at LIMIT 1"""
+                   AND (required_material IS NULL OR required_material=?)
+                   ORDER BY queue_position, created_at LIMIT 1""",
+                (printer["material"],),
             ).fetchone()
             if active is not None:
                 db.execute(
@@ -622,6 +652,38 @@ def upload_job(file: UploadFile = File(...), printer_id: str | None = Form(defau
         schedule_buffer()
     return {"id": job_id, "name": original_name, "size_bytes": size,
             "queue_position": position, "printer_id": printer_id, "status": job_status}
+
+
+@app.patch("/api/jobs/{job_id}/quantity", dependencies=[Depends(require_admin)])
+def set_job_quantity(job_id: str, payload: JobQuantityUpdate):
+    with connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if job is None:
+            raise HTTPException(404, "Úloha neexistuje")
+        if job["status"] in ("complete", "error"):
+            raise HTTPException(409, "Počet kusů dokončené úlohy nelze změnit")
+        db.execute("UPDATE jobs SET required_quantity=? WHERE id=?", (payload.required_quantity, job_id))
+    return {"accepted": True, "required_quantity": payload.required_quantity}
+
+
+@app.patch("/api/jobs/{job_id}/material", dependencies=[Depends(require_admin)])
+def set_job_material(job_id: str, payload: JobMaterialUpdate):
+    with connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if job is None:
+            raise HTTPException(404, "Úloha neexistuje")
+        if job["status"] != "queued":
+            raise HTTPException(409, "Materiál lze změnit pouze před přidělením úlohy tiskárně")
+        if payload.required_material is not None and db.execute(
+            "SELECT 1 FROM material_catalog WHERE code=?", (payload.required_material,)
+        ).fetchone() is None:
+            raise HTTPException(422, "Neznámý materiál")
+        db.execute("UPDATE jobs SET required_material=?, scheduling_message=NULL WHERE id=?",
+                   (payload.required_material, job_id))
+    schedule_buffer()
+    return {"accepted": True, "required_material": payload.required_material}
 
 
 @app.get("/api/jobs", dependencies=[Depends(require_admin)])

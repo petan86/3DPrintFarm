@@ -45,6 +45,14 @@ class JobStateUpdate(BaseModel):
     message: str | None = Field(default=None, max_length=256)
 
 
+class JobQuantityUpdate(BaseModel):
+    required_quantity: int = Field(ge=1, le=100000, strict=True)
+
+
+class JobMaterialUpdate(BaseModel):
+    required_material: str | None = Field(default=None, min_length=1, max_length=16)
+
+
 class MaterialUpdate(BaseModel):
     material: str = Field(min_length=1, max_length=64)
     color: str = Field(min_length=1, max_length=64)

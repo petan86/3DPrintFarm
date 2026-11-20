@@ -147,6 +147,8 @@ def initialize() -> None:
 
         # Lightweight migration for databases created by an earlier prototype.
         columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
+        if "required_quantity" not in columns:
+            db.execute("ALTER TABLE jobs ADD COLUMN required_quantity INTEGER NOT NULL DEFAULT 1")
         if "status_message" not in columns:
             db.execute("ALTER TABLE jobs ADD COLUMN status_message TEXT")
         if "thumbnail_name" not in columns:
@@ -165,6 +167,10 @@ def initialize() -> None:
             ) WHERE assigned_printer_name IS NULL AND printer_id IS NOT NULL"""
         )
         printer_columns = {row[1] for row in db.execute("PRAGMA table_info(printers)")}
+        if "ip_address" not in printer_columns:
+            db.execute("ALTER TABLE printers ADD COLUMN ip_address TEXT")
+        if "last_contact" not in printer_columns:
+            db.execute("ALTER TABLE printers ADD COLUMN last_contact TEXT")
         if "material_color" not in printer_columns:
             db.execute("ALTER TABLE printers ADD COLUMN material_color TEXT")
         if "rack" not in printer_columns:
