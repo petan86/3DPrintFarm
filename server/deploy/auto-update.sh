@@ -55,14 +55,22 @@ main() {
         exit 0
     fi
     rm -f "$STATUS_DIR/request"
-    latest="$(curl -fsSL --max-time 20 \
+    local response http_code
+    response="$(mktemp)"
+    http_code="$(curl -sSL --max-time 20 -o "$response" -w '%{http_code}' \
         -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])' 2>/dev/null || true)"
+        "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || true)"
+    latest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tag_name"])' "$response" 2>/dev/null || true)"
+    rm -f "$response"
 
     if [ -z "$latest" ]; then
-        log "No published release found (or GitHub unreachable), nothing to do."
-        write_status idle "Na GitHubu není dostupný žádný release"
+        if [ "$http_code" = "404" ]; then
+            log "No published release found, nothing to do."
+            write_status idle "Na GitHubu zatím není žádný release"
+        else
+            log "GitHub unreachable (HTTP ${http_code:-none}), will retry later."
+            write_status error "GitHub není z Raspberry Pi dostupný, zkontrolujte připojení k internetu"
+        fi
         exit 0
     fi
 
