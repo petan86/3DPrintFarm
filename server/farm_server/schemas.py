@@ -53,6 +53,15 @@ class JobMaterialUpdate(BaseModel):
     required_material: str | None = Field(default=None, min_length=1, max_length=16)
 
 
+class JobUpdate(BaseModel):
+    """Partial job edit; only fields present in the request are changed."""
+    required_quantity: int | None = Field(default=None, ge=1, le=100000, strict=True)
+    required_material: str | None = Field(default=None, min_length=1, max_length=16)
+    required_color: str | None = Field(default=None, min_length=1, max_length=16)
+    # None = automatic scheduling, otherwise the printer the job is assigned to.
+    printer_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class MaterialUpdate(BaseModel):
     material: str = Field(min_length=1, max_length=64)
     color: str = Field(min_length=1, max_length=64)
@@ -79,6 +88,15 @@ class PreheatRequest(BaseModel):
 
 
 DEFAULT_HOTSPOT_SSID = "PrintFarm"
+
+
+class AdminPasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=10, max_length=256)
+
+
+class GuestAccess(BaseModel):
+    enabled: bool
 
 
 class HotspotSettings(BaseModel):

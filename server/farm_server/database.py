@@ -66,6 +66,7 @@ def initialize() -> None:
                 thumbnail_name TEXT,
                 assigned_printer_name TEXT,
                 required_material TEXT,
+                required_color TEXT,
                 estimated_seconds INTEGER,
                 scheduling_message TEXT,
                 FOREIGN KEY (printer_id) REFERENCES printers(id)
@@ -157,6 +158,8 @@ def initialize() -> None:
             db.execute("ALTER TABLE jobs ADD COLUMN assigned_printer_name TEXT")
         if "required_material" not in columns:
             db.execute("ALTER TABLE jobs ADD COLUMN required_material TEXT")
+        if "required_color" not in columns:
+            db.execute("ALTER TABLE jobs ADD COLUMN required_color TEXT")
         if "estimated_seconds" not in columns:
             db.execute("ALTER TABLE jobs ADD COLUMN estimated_seconds INTEGER")
         if "scheduling_message" not in columns:

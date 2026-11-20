@@ -57,10 +57,31 @@ Vydání nové verze (na PC, po pushnutí změn do `main`):
 gh release create v0.2.0 --generate-notes
 ```
 
+V dashboardu v **Nastavení → Verze a aktualizace** je vidět nainstalovaná
+verze, nejnovější release na GitHubu a výsledek poslední aktualizace.
+Tlačítko **Nainstalovat** spustí aktualizaci hned: server zapíše
+`server/data/updater/request` a jednotka `printfarm-update.path` spustí
+stejný skript jako časovač.
+
 Pre-releasy a koncepty se nenasazují. Při použití hotspotu přidejte do `.env`
 řádek `COMPOSE_FILE=compose.yaml:compose.hotspot.yaml`, aby aktualizace
 používala stejnou konfiguraci. Vypnutí:
 `sudo systemctl disable --now printfarm-update.timer`.
+
+## Přihlášení, heslo a host
+
+Do dashboardu se přihlašuje heslem administrátora. Na začátku jím je
+`FARM_ADMIN_KEY` ze souboru `.env`. V **Nastavení → Přístup** lze nastavit
+vlastní heslo (ukládá se jako PBKDF2 hash v databázi). Od té chvíle klíč
+z `.env` neplatí. Zapomenuté heslo se smaže a znovu začne platit klíč z `.env`:
+
+```bash
+docker compose exec farm-server python -m server.farm_server.reset_admin_password
+```
+
+Host se přihlásí bez hesla a může jen prohlížet farmu, úlohy, filamenty
+a historii. Server mu povolí jen čtecí požadavky. Přihlášení hosta lze
+v **Nastavení → Přístup** vypnout.
 
 ## Wi-Fi hotspot pro ESP32
 

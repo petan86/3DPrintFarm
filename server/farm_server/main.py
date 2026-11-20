@@ -10,6 +10,9 @@ import re
 import secrets
 import shutil
 import subprocess
+import time
+import urllib.error
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -20,7 +23,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import connection, data_dir, initialize
-from .schemas import JobMaterialUpdate, JobQuantityUpdate
+from .schemas import AdminPasswordChange, GuestAccess, JobMaterialUpdate, JobQuantityUpdate, JobUpdate
 from .schemas import DEFAULT_HOTSPOT_SSID, ColorCatalogCreate, HotspotSettings, JobStateUpdate, MaterialCatalogCreate, MaterialColorsUpdate, MaterialUpdate, PreheatRequest, PrinterCreate, PrinterRegistered, Telemetry
 
 
@@ -104,11 +107,11 @@ def schedule_buffer() -> None:
     """Reserve one compatible upcoming job for printers in earliest-finish order."""
     with connection() as db:
         queued = db.execute(
-            "SELECT id, required_material FROM jobs WHERE status='queued' AND printer_id IS NULL ORDER BY queue_position"
+            "SELECT id, required_material, required_color FROM jobs WHERE status='queued' AND printer_id IS NULL ORDER BY queue_position"
         ).fetchall()
         for job in queued:
             printers = db.execute(
-                """SELECT p.id, p.name, p.material, p.status, p.progress, p.last_seen,
+                """SELECT p.id, p.name, p.material, p.material_color, p.status, p.progress, p.last_seen,
                    COALESCE(active.estimated_seconds, 0) estimated_seconds
                    FROM printers p LEFT JOIN jobs active ON active.printer_id=p.id
                      AND active.status IN ('heating','leveling','waiting_local_approval','printing','paused')
@@ -117,9 +120,14 @@ def schedule_buffer() -> None:
                        AND future.status IN ('assigned','downloading','ready'))"""
             ).fetchall()
             online = [p for p in printers if (datetime.now(timezone.utc) - datetime.fromisoformat(p["last_seen"])).total_seconds() <= 30]
-            compatible = [p for p in online if not job["required_material"] or p["material"] == job["required_material"]]
+            compatible = [
+                p for p in online
+                if (not job["required_material"] or p["material"] == job["required_material"])
+                and (not job["required_color"] or p["material_color"] == job["required_color"])
+            ]
             if not compatible:
-                message = "Čeká na tiskárnu se správným filamentem" if job["required_material"] else "Čeká na dostupnou tiskárnu"
+                restricted = job["required_material"] or job["required_color"]
+                message = "Čeká na tiskárnu se správným filamentem" if restricted else "Čeká na dostupnou tiskárnu"
                 db.execute("UPDATE jobs SET scheduling_message=? WHERE id=?", (message, job["id"]))
                 continue
             def remaining(printer):
@@ -135,12 +143,63 @@ def schedule_buffer() -> None:
             )
 
 
+ADMIN_PASSWORD_SETTING = "admin_password_hash"
+PBKDF2_ITERATIONS = 200_000
+# Verified passwords by stored hash, so the dashboard's frequent polling does
+# not pay for PBKDF2 on every request. Holds only SHA-256 digests.
+_verified_admin: dict[str, str] = {}
+
+
+def hash_admin_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
+
+
+def admin_password_matches(password: str) -> bool:
+    """Checks the password set in Settings, or FARM_ADMIN_KEY while none is set."""
+    with connection() as db:
+        row = db.execute("SELECT value FROM app_settings WHERE key=?", (ADMIN_PASSWORD_SETTING,)).fetchone()
+    if row is None:
+        expected = os.getenv("FARM_ADMIN_KEY", "")
+        if not expected:
+            raise HTTPException(503, "FARM_ADMIN_KEY is not configured")
+        return hmac.compare_digest(password, expected)
+    stored = row[0]
+    quick = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    if hmac.compare_digest(_verified_admin.get(stored, ""), quick):
+        return True
+    try:
+        _, iterations, salt, digest = stored.split("$")
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), int(iterations))
+    except ValueError:
+        return False
+    if hmac.compare_digest(candidate.hex(), digest):
+        _verified_admin.clear()
+        _verified_admin[stored] = quick
+        return True
+    return False
+
+
 def require_admin(x_admin_key: str = Header(default="")) -> None:
-    expected = os.getenv("FARM_ADMIN_KEY", "")
-    if not expected:
-        raise HTTPException(503, "FARM_ADMIN_KEY is not configured")
-    if not hmac.compare_digest(x_admin_key, expected):
+    if not x_admin_key or not admin_password_matches(x_admin_key):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid admin key")
+
+
+def guest_access_enabled() -> bool:
+    with connection() as db:
+        row = db.execute("SELECT value FROM app_settings WHERE key='guest_enabled'").fetchone()
+    return row is None or row[0] == "1"
+
+
+def require_viewer(x_admin_key: str = Header(default=""), x_guest: str = Header(default="")) -> None:
+    """Read-only endpoints: the admin, or a guest while guest access is enabled."""
+    if x_admin_key:
+        require_admin(x_admin_key)
+        return
+    if x_guest == "1" and guest_access_enabled():
+        return
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Login required")
 
 
 def require_printer(request: Request, x_printer_key: str = Header(default="")):
@@ -225,7 +284,7 @@ def register_printer(payload: PrinterCreate):
     return PrinterRegistered(id=printer_id, name=payload.name.strip(), api_key=api_key)
 
 
-@app.get("/api/printers", dependencies=[Depends(require_admin)])
+@app.get("/api/printers", dependencies=[Depends(require_viewer)])
 def list_printers():
     with connection() as db:
         rows = db.execute(
@@ -310,6 +369,103 @@ def get_connected_devices():
     return {"devices": devices}
 
 
+@app.get("/api/auth/guest")
+def get_guest_access():
+    """Public: tells the login screen whether to offer guest access."""
+    return {"enabled": guest_access_enabled()}
+
+
+@app.put("/api/settings/guest", dependencies=[Depends(require_admin)])
+def set_guest_access(payload: GuestAccess):
+    with connection() as db:
+        db.execute(
+            "INSERT INTO app_settings(key, value) VALUES('guest_enabled', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            ("1" if payload.enabled else "0",),
+        )
+    return {"enabled": payload.enabled}
+
+
+@app.post("/api/settings/admin-password", dependencies=[Depends(require_admin)])
+def change_admin_password(payload: AdminPasswordChange):
+    if not admin_password_matches(payload.current_password):
+        raise HTTPException(403, "Současné heslo není správné")
+    if not payload.new_password.strip():
+        raise HTTPException(422, "Nové heslo nesmí být prázdné")
+    with connection() as db:
+        db.execute(
+            "INSERT INTO app_settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (ADMIN_PASSWORD_SETTING, hash_admin_password(payload.new_password)),
+        )
+    _verified_admin.clear()
+    return {"accepted": True}
+
+
+GITHUB_REPO = os.environ.get("FARM_GITHUB_REPO", "petan86/3DPrintFarm")
+_latest_release_cache: dict = {"at": 0.0, "value": None}
+
+
+def updater_dir() -> Path:
+    """Shared with the host updater (server/deploy/auto-update.sh) via the data volume."""
+    return data_dir() / "updater"
+
+
+def latest_release(refresh: bool = False) -> dict:
+    """Latest published GitHub release, cached for ten minutes."""
+    cached = _latest_release_cache
+    if not refresh and cached["value"] is not None and time.monotonic() - cached["at"] < 600:
+        return cached["value"]
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "PrintFarm-server"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            release = json.load(response)
+        value = {"version": release.get("tag_name"), "name": release.get("name"),
+                 "published_at": release.get("published_at"), "url": release.get("html_url"), "error": None}
+    except urllib.error.HTTPError as exc:
+        value = {"version": None, "error": "Na GitHubu zatím není žádný release" if exc.code == 404 else f"GitHub odpověděl chybou {exc.code}"}
+    except (OSError, ValueError):
+        value = {"version": None, "error": "GitHub není dostupný"}
+    cached.update(at=time.monotonic(), value=value)
+    return value
+
+
+@app.get("/api/settings/update", dependencies=[Depends(require_admin)])
+def get_update_status(refresh: bool = False):
+    status_file = updater_dir() / "status.json"
+    installed = None
+    if status_file.is_file():
+        try:
+            installed = json.loads(status_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            installed = {"state": "error", "message": "Stav aktualizace nelze přečíst"}
+    latest = latest_release(refresh)
+    current = (installed or {}).get("current")
+    return {
+        "updater_installed": installed is not None,
+        "installed": installed,
+        "latest": latest,
+        "update_available": bool(latest.get("version") and current and current != latest["version"]),
+        "request_pending": (updater_dir() / "request").exists(),
+    }
+
+
+@app.post("/api/settings/update", dependencies=[Depends(require_admin)], status_code=202)
+def request_update():
+    directory = updater_dir()
+    if not (directory / "status.json").is_file():
+        raise HTTPException(409, "Automatické aktualizace nejsou na Raspberry Pi nainstalované")
+    request_file = directory / "request"
+    if request_file.exists():
+        raise HTTPException(409, "Aktualizace už byla vyžádána")
+    try:
+        request_file.write_text(now(), encoding="utf-8")
+    except OSError:
+        raise HTTPException(500, "Požadavek na aktualizaci nelze zapsat")
+    return {"accepted": True}
+
+
 @app.get("/api/settings/hotspot", dependencies=[Depends(require_admin)])
 def get_hotspot_settings():
     with connection() as db:
@@ -354,7 +510,7 @@ def delete_printer(printer_id: str):
     return Response(status_code=204)
 
 
-@app.get("/api/materials", dependencies=[Depends(require_admin)])
+@app.get("/api/materials", dependencies=[Depends(require_viewer)])
 def list_materials():
     with connection() as db:
         rows = db.execute(
@@ -411,7 +567,7 @@ def set_material_colors(material_code: str, payload: MaterialColorsUpdate):
     return {"material_code": material_code, "color_codes": unique_codes}
 
 
-@app.get("/api/colors", dependencies=[Depends(require_admin)])
+@app.get("/api/colors", dependencies=[Depends(require_viewer)])
 def list_colors():
     with connection() as db:
         rows = db.execute(
@@ -467,7 +623,7 @@ def preheat(printer_id: str, payload: PreheatRequest):
     return {"accepted": True, "command_id": command_id}
 
 
-@app.get("/api/printers/{printer_id}/history", dependencies=[Depends(require_admin)])
+@app.get("/api/printers/{printer_id}/history", dependencies=[Depends(require_viewer)])
 def printer_history(printer_id: str):
     require_printer_exists(printer_id)
     with connection() as db:
@@ -513,8 +669,9 @@ def claim_next_job(printer=Depends(require_printer)):
                 """SELECT id, original_name, size_bytes, status FROM jobs
                    WHERE status='queued' AND printer_id IS NULL
                    AND (required_material IS NULL OR required_material=?)
+                   AND (required_color IS NULL OR required_color=?)
                    ORDER BY queue_position, created_at LIMIT 1""",
-                (printer["material"],),
+                (printer["material"], printer["material_color"]),
             ).fetchone()
             if active is not None:
                 db.execute(
@@ -557,7 +714,7 @@ def download_job(job_id: str, printer=Depends(require_printer)):
     return FileResponse(path, filename=job["original_name"], media_type="text/x.gcode")
 
 
-@app.get("/api/jobs/{job_id}/thumbnail", dependencies=[Depends(require_admin)])
+@app.get("/api/jobs/{job_id}/thumbnail", dependencies=[Depends(require_viewer)])
 def job_thumbnail(job_id: str):
     with connection() as db:
         job = db.execute("SELECT thumbnail_name FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -680,13 +837,102 @@ def set_job_material(job_id: str, payload: JobMaterialUpdate):
             "SELECT 1 FROM material_catalog WHERE code=?", (payload.required_material,)
         ).fetchone() is None:
             raise HTTPException(422, "Neznámý materiál")
-        db.execute("UPDATE jobs SET required_material=?, scheduling_message=NULL WHERE id=?",
-                   (payload.required_material, job_id))
+        db.execute(
+            """UPDATE jobs SET required_material=?, scheduling_message=NULL,
+               required_color=CASE WHEN ? IS NOT NULL AND EXISTS (SELECT 1 FROM material_colors
+                 WHERE material_code=? AND color_code=jobs.required_color) THEN required_color END
+               WHERE id=?""",
+            (payload.required_material, payload.required_material, payload.required_material, job_id))
     schedule_buffer()
     return {"accepted": True, "required_material": payload.required_material}
 
 
-@app.get("/api/jobs", dependencies=[Depends(require_admin)])
+@app.patch("/api/jobs/{job_id}", dependencies=[Depends(require_admin)])
+def update_job(job_id: str, payload: JobUpdate):
+    """Edit quantity, material, colour and printer assignment of a job in one request.
+
+    Material, colour and printer can change only while the printer has not
+    started downloading the job (status queued or assigned). An explicit
+    printer must match the required material and colour; when only the
+    filament changes and the current printer no longer matches, the job
+    returns to automatic scheduling.
+    """
+    fields = payload.model_fields_set
+    with connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = db.execute(
+            """SELECT status, printer_id, required_quantity, required_material, required_color,
+               scheduling_message FROM jobs WHERE id=?""", (job_id,)
+        ).fetchone()
+        if job is None:
+            raise HTTPException(404, "Úloha neexistuje")
+        quantity = payload.required_quantity if "required_quantity" in fields else job["required_quantity"]
+        material = payload.required_material if "required_material" in fields else job["required_material"]
+        color = payload.required_color if "required_color" in fields else job["required_color"]
+        printer_id = payload.printer_id if "printer_id" in fields else job["printer_id"]
+        if "required_quantity" in fields:
+            if quantity is None:
+                raise HTTPException(422, "Počet kusů je povinný")
+            if quantity != job["required_quantity"] and job["status"] in ("complete", "error"):
+                raise HTTPException(409, "Počet kusů dokončené úlohy nelze změnit")
+        filament_changed = (material, color) != (job["required_material"], job["required_color"])
+        printer_changed = printer_id != job["printer_id"]
+        if (filament_changed or printer_changed) and job["status"] not in ("queued", "assigned"):
+            raise HTTPException(409, "Materiál, barvu a tiskárnu lze změnit jen u úlohy, kterou tiskárna ještě nezačala stahovat")
+        if job["status"] not in ("queued", "assigned"):
+            db.execute("UPDATE jobs SET required_quantity=? WHERE id=?", (quantity, job_id))
+            return {"accepted": True, "required_quantity": quantity, "required_material": material,
+                    "required_color": color, "printer_id": job["printer_id"], "status": job["status"]}
+        if filament_changed:
+            if material is not None and db.execute(
+                "SELECT 1 FROM material_catalog WHERE code=?", (material,)
+            ).fetchone() is None:
+                raise HTTPException(422, "Neznámý materiál")
+            if color is not None:
+                if material is None:
+                    raise HTTPException(422, "Barvu lze zadat jen spolu s materiálem")
+                if db.execute(
+                    "SELECT 1 FROM material_colors WHERE material_code=? AND color_code=?", (material, color)
+                ).fetchone() is None:
+                    raise HTTPException(422, "Barva není pro tento materiál dostupná")
+        printer = None
+        if printer_id is not None:
+            printer = db.execute(
+                "SELECT id, name, material, material_color FROM printers WHERE id=?", (printer_id,)
+            ).fetchone()
+            if printer is None:
+                raise HTTPException(404, "Tiskárna neexistuje")
+            compatible = ((not material or printer["material"] == material)
+                          and (not color or printer["material_color"] == color))
+            if not compatible:
+                if printer_changed:
+                    raise HTTPException(409, f"Tiskárna {printer['name']} nemá založený požadovaný materiál a barvu")
+                printer = None  # filament changed under an existing assignment: back to the scheduler
+        if printer is None:
+            status_value, assigned_id, assigned_name = "queued", None, None
+        else:
+            status_value, assigned_id, assigned_name = "assigned", printer["id"], printer["name"]
+        if printer_changed and printer is not None:
+            message = "Ručně přiřazeno"
+        elif filament_changed or printer_changed:
+            message = None  # the scheduler fills in a fresh message
+        else:
+            message = job["scheduling_message"]
+        db.execute(
+            """UPDATE jobs SET required_quantity=?, required_material=?, required_color=?,
+               status=?, printer_id=?, assigned_printer_name=?, scheduling_message=? WHERE id=?""",
+            (quantity, material, color, status_value, assigned_id, assigned_name, message, job_id),
+        )
+        if printer_changed and printer is not None:
+            db.execute("UPDATE printers SET status='queued' WHERE id=? AND status IN ('idle','ready','complete')",
+                       (printer["id"],))
+    if filament_changed or printer_changed:
+        schedule_buffer()
+    return {"accepted": True, "required_quantity": quantity, "required_material": material,
+            "required_color": color, "printer_id": assigned_id, "status": status_value}
+
+
+@app.get("/api/jobs", dependencies=[Depends(require_viewer)])
 def list_jobs():
     with connection() as db:
         rows = db.execute(
