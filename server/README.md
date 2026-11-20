@@ -23,13 +23,44 @@ Z kořene repozitáře:
 
 ```bash
 cp server/.env.example .env
-# V .env nastavte dlouhý náhodný FARM_ADMIN_KEY.
+sed -i "s/^FARM_ADMIN_KEY=.*/FARM_ADMIN_KEY=$(openssl rand -hex 32)/" .env
+# Kontejner běží jako UID 10001 a musí mít právo zapisovat do server/data.
+mkdir -p server/data && sudo chown -R 10001:10001 server/data
 docker compose up -d --build
 docker compose ps
 ```
 
 Data a G-code zůstávají na hostiteli v `server/data`. Kontejner běží pod
 neprivilegovaným uživatelem a po restartu Raspberry Pi se automaticky spustí.
+Pokud kontejner hned po startu padá a dashboard se nenačte, zkontrolujte
+vlastníka `server/data` (`ls -ln server`).
+
+## Automatická aktualizace z GitHub releasů
+
+Raspberry Pi může samo nasazovat nové verze. Časovač systemd každých
+15 minut zjistí nejnovější publikovaný release na GitHubu a pokud je jiný než
+nasazená verze, přepne repozitář na jeho tag, znovu sestaví kontejner
+a počká, až bude `healthy`. Když nová verze nenaběhne, vrátí se automaticky
+na předchozí.
+
+Instalace (jednou, z kořene repozitáře):
+
+```bash
+sudo server/deploy/install-auto-update.sh
+sudo systemctl start printfarm-update.service   # okamžitá kontrola
+journalctl -u printfarm-update.service -n 50    # log aktualizací
+```
+
+Vydání nové verze (na PC, po pushnutí změn do `main`):
+
+```bash
+gh release create v0.2.0 --generate-notes
+```
+
+Pre-releasy a koncepty se nenasazují. Při použití hotspotu přidejte do `.env`
+řádek `COMPOSE_FILE=compose.yaml:compose.hotspot.yaml`, aby aktualizace
+používala stejnou konfiguraci. Vypnutí:
+`sudo systemctl disable --now printfarm-update.timer`.
 
 ## Wi-Fi hotspot pro ESP32
 

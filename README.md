@@ -36,8 +36,12 @@ Rychlé spuštění na Raspberry Pi:
 ```bash
 cp server/.env.example .env
 # nastavte FARM_ADMIN_KEY v souboru .env
+mkdir -p server/data && sudo chown -R 10001:10001 server/data
 docker compose up -d --build
 ```
+
+Automatické nasazování nových GitHub releasů popisuje
+[server/README.md](server/README.md#automatická-aktualizace-z-github-releasů).
 
 Dashboard pak poběží na `http://<IP-RASPBERRY-PI>:8000/` a dokumentace API
 na `http://<IP-RASPBERRY-PI>:8000/docs`.

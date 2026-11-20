@@ -36,3 +36,6 @@ __pycache__/
 
 # Downloaded archive; sources are present in the repository
 Marlin_2125.zip
+
+# Auto-update lock file
+.auto-update.lock
